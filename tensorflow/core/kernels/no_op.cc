@@ -24,4 +24,6 @@ REGISTER_KERNEL_BUILDER(Name("NoOp").Device(DEVICE_GPU), NoOp);
 REGISTER_KERNEL_BUILDER(Name("NoOp").Device(DEVICE_SYCL), NoOp);
 #endif
 
+REGISTER_KERNEL_BUILDER(Name("NoOp").Device(DEVICE_DML), NoOp);
+
 }  // namespace tensorflow

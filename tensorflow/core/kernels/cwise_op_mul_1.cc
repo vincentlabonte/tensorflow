@@ -51,4 +51,9 @@ REGISTER_KERNEL_BUILDER(Name("Mul")
                             .TypeConstraint<int32>("T"),
                         BinaryOp<CPUDevice, functor::mul<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+REGISTER_KERNEL_BUILDER(
+    Name("Mul").Device(DEVICE_DML).TypeConstraint<int32>("T"),
+    BinaryOp<CPUDevice, functor::mul<int32>>);
+
 }  // namespace tensorflow

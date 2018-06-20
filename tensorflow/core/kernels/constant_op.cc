@@ -140,6 +140,8 @@ REGISTER_SYCL_KERNEL(SYCL, bool);
 #undef REGISTER_SYCL_KERNEL
 #endif
 
+REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_DML), ConstantOp);
+
 HostConstantOp::HostConstantOp(OpKernelConstruction* ctx)
     : OpKernel(ctx), tensor_(ctx->output_type(0)) {
   const TensorProto* proto = nullptr;
