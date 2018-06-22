@@ -38,8 +38,6 @@ class DmlInterface {
   }
 
   ~DmlInterface() {
-    m_cpu_allocator_.clear();
-
     //for (auto p : m_dml_allocator_) {
     //  p->Synchronize();
     //  p->ClearSYCLDevice();
@@ -53,11 +51,7 @@ class DmlInterface {
     //}
     //m_dml_allocator_.clear();
 
-    for (auto p : m_dml_context_) {
-      p->Unref();
-    }
-    m_dml_context_.clear();
-
+	m_dml_context_->Unref();
   }
 
   void AddDevice() {
@@ -83,13 +77,8 @@ class DmlInterface {
 	return m_cpu_allocator_;
   }
 
-  SYCLDeviceContext* GetSYCLContext(size_t i = 0) const {
-    if (!m_sycl_context_.empty()) {
-      return m_sycl_context_[i];
-    } else {
-      std::cerr << "No cl::sycl::device has been added" << std::endl;
-      return nullptr;
-    }
+  DmlDeviceContext* GetDmlContext() const {
+	return m_dml_context_;
   }
 };
 

@@ -22,20 +22,21 @@ limitations under the License.
 
 namespace tensorflow {
 
-	void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor *cpu_tensor,
-		Device *device,
-		Tensor *device_tensor,
-		StatusCallback done) const {
-		done(Status::OK());
-	}
+void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
+                                             Device* device,
+                                             Tensor* device_tensor,
+                                             StatusCallback done) const {
+  *device_tensor = *cpu_tensor;
+  done(Status::OK());
+}
 
-	void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor *device_tensor,
-		StringPiece edge_name,
-		Device *device,
-		Tensor *cpu_tensor,
-		StatusCallback done) {
-		done(Status::OK());
-	}
+void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
+                                             StringPiece edge_name,
+                                             Device* device, Tensor* cpu_tensor,
+                                             StatusCallback done) {
+  *cpu_tensor = *device_tensor;
+  done(Status::OK());
+}
 
 }  // namespace tensorflow
 //#endif  // TENSORFLOW_USE_DML

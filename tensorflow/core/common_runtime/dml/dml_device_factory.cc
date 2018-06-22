@@ -26,6 +26,8 @@ class DmlDeviceFactory : public DeviceFactory {
  public:
   Status CreateDevices(const SessionOptions &options, const string &name_prefix,
                        std::vector<Device *> *devices) override {
+    auto dmlInterface = DmlInterface::instance();
+
     size_t n = 1;
     auto iter = options.config.device_count().find("DML");
     if (iter != options.config.device_count().end()) {
@@ -35,8 +37,8 @@ class DmlDeviceFactory : public DeviceFactory {
     for (int i = 0; i < n; i++) {
       string name = strings::StrCat(name_prefix, "/device:DML:", i);
       devices->push_back(new DmlDevice(options, name, Bytes(256 << 20),
-                                       DeviceLocality(), "", nullptr,
-                                       DmlDeviceContext()));
+                                       DeviceLocality(), "", dmlInterface->GetCPUAllocator(),
+                                       dmlInterface->GetDmlContext()));
     }
 
     return Status::OK();
