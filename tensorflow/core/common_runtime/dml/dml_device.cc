@@ -31,49 +31,42 @@ void DmlDevice::Compute(OpKernel* op_kernel, OpKernelContext* context) {
 }
 
 Allocator* DmlDevice::GetAllocator(AllocatorAttributes attr) {
-  //if (attr.on_host())
+  if (attr.on_host())
     return cpu_allocator_;
-  //else
-  //  return dml_allocator_;
+  else
+    return dml_allocator_;
 }
 
 Status DmlDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
                                       const AllocatorAttributes alloc_attrs,
                                       Tensor* tensor) {
+  AllocatorAttributes attr;
+  attr.set_on_host(true);
+  Allocator* host_alloc = GetAllocator(attr);
+
   Tensor parsed(tensor_proto.dtype());
-  if (!parsed.FromProto(tensor_proto)) {
+  if (!parsed.FromProto(host_alloc, tensor_proto)) {
     return errors::InvalidArgument("Cannot parse tensor from proto: ",
                                    tensor_proto.DebugString());
   }
-  *tensor = parsed;
-  return Status::OK();
-  //AllocatorAttributes attr;
-  //attr.set_on_host(true);
-  //Allocator* host_alloc = GetAllocator(attr);
+  Status status;
+  if (alloc_attrs.on_host()) {
+    *tensor = parsed;
+  } else {
+    Tensor copy(GetAllocator(alloc_attrs), parsed.dtype(), parsed.shape());
 
-  //Tensor parsed(tensor_proto.dtype());
-  //if (!parsed.FromProto(host_alloc, tensor_proto)) {
-  //  return errors::InvalidArgument("Cannot parse tensor from proto: ",
-  //                                 tensor_proto.DebugString());
-  //}
-  //Status status;
-  //if (alloc_attrs.on_host()) {
-  //  *tensor = parsed;
-  //} else {
-  //  Tensor copy(GetAllocator(alloc_attrs), parsed.dtype(), parsed.shape());
+    // If the tensor is not initialized, we likely ran out of memory.
+    if (!copy.IsInitialized()) {
+      return errors::ResourceExhausted(
+          "OOM when allocating tensor of shape ", parsed.shape().DebugString(),
+          " and type ", DataTypeString(parsed.dtype()));
+    }
 
-  //  // If the tensor is not initialized, we likely ran out of memory.
-  //  if (!copy.IsInitialized()) {
-  //    return errors::ResourceExhausted(
-  //        "OOM when allocating tensor of shape ", parsed.shape().DebugString(),
-  //        " and type ", DataTypeString(parsed.dtype()));
-  //  }
-
-  //  device_context_->CopyCPUTensorToDevice(
-  //      &parsed, this, &copy, [&status](const Status& s) { status = s; });
-  //  *tensor = copy;
-  //}
-  //return status;
+    device_context_->CopyCPUTensorToDevice(
+        &parsed, this, &copy, [&status](const Status& s) { status = s; });
+    *tensor = copy;
+  }
+  return status;
 }
 
 Status DmlDevice::FillContextMap(const Graph* graph,
@@ -90,12 +83,7 @@ Status DmlDevice::FillContextMap(const Graph* graph,
 }
 
 Status DmlDevice::Sync() {
-  //dml_allocator_->Synchronize();
-  //if (dml_allocator_->Ok()) {
-    return Status::OK();
-  //} else {
-  //  return errors::Internal("Unknown error detected on device ", name());
-  //}
+  return Status::OK();
 }
 
 }  // namespace tensorflow

@@ -24,8 +24,8 @@ namespace tensorflow {
 
 class DmlDeviceFactory : public DeviceFactory {
  public:
-  Status CreateDevices(const SessionOptions &options, const string &name_prefix,
-                       std::vector<Device *> *devices) override {
+  Status CreateDevices(const SessionOptions& options, const string& name_prefix,
+                       std::vector<Device*>* devices) override {
     auto dmlInterface = DmlInterface::instance();
 
     size_t n = 1;
@@ -36,9 +36,10 @@ class DmlDeviceFactory : public DeviceFactory {
 
     for (int i = 0; i < n; i++) {
       string name = strings::StrCat(name_prefix, "/device:DML:", i);
-      devices->push_back(new DmlDevice(options, name, Bytes(256 << 20),
-                                       DeviceLocality(), "", dmlInterface->GetCPUAllocator(),
-                                       dmlInterface->GetDmlContext()));
+      devices->push_back(new DmlDevice(
+          options, name, Bytes(256 << 20), DeviceLocality(), "",
+          dmlInterface->GetDmlAllocator(), dmlInterface->GetCPUAllocator(),
+          dmlInterface->GetDmlContext()));
     }
 
     return Status::OK();
