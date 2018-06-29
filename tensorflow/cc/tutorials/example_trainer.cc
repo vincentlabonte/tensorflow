@@ -24,30 +24,26 @@ limitations under the License.
 #include "tensorflow/core/graph/default_device.h"
 #include "tensorflow/core/graph/graph_def_builder.h"
 #include "tensorflow/core/lib/core/threadpool.h"
-#include "tensorflow/core/lib/strings/str_util.h"
-#include "tensorflow/core/lib/strings/stringprintf.h"
 #include "tensorflow/core/platform/init_main.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/public/session.h"
 
-using tensorflow::string;
-using tensorflow::int32;
 using namespace tensorflow;
 
 int main(int argc, char* argv[]) {
-  const int32_t dataCount = 5;
+  const int dataCount = 5;
+  std::vector<float> data_a({1, 6, -4, 8, -7});
+  std::vector<float> data_b({-3, 2, 4, -5, -9});
 
   Scope root = Scope::NewRootScope();
 
-  auto a = ops::Const(root.WithOpName("a"), {1, 6, -4, 8, -7}, {dataCount});
-  auto b = ops::Const(root.WithOpName("b"), {-3, 2, 4, -5, -9}, {dataCount});
-
-  // x = a * 2
-  auto x = ops::Multiply(root.WithOpName("x"), a, 2);
-
-  // y = x + b
-  auto y = ops::Add(root.WithOpName("result"), x, b);
+  auto a = ops::Placeholder(root.WithOpName("a"), DataType::DT_FLOAT,
+                            ops::Placeholder::Shape({dataCount}));
+  auto b = ops::Placeholder(root.WithOpName("b"), DataType::DT_FLOAT,
+                            ops::Placeholder::Shape({dataCount}));
+  //auto b = ops::Const(root.WithOpName("b"), {-3, 2, 4, -5, -9}, {dataCount});
+  auto result = ops::Add(root.WithOpName("result"), a, b);
 
   GraphDef def;
   TF_CHECK_OK(root.ToGraphDef(&def));
@@ -56,22 +52,25 @@ int main(int argc, char* argv[]) {
   SessionOptions options;
   std::unique_ptr<Session> session(NewSession(options));
   if (options.target.empty()) {
-    graph::SetDefaultDevice("/cpu:0", &def);
+    // graph::SetDefaultDevice("/cpu:0", &def);
     // graph::SetDefaultDevice("/device:GPU:0", &def);
-    // graph::SetDefaultDevice("/device:DML:0", &def);
+    graph::SetDefaultDevice("/device:DML:0", &def);
   }
   TF_CHECK_OK(session->Create(def));
 
+  Tensor tensor_a(DataType::DT_FLOAT, {dataCount});
+  std::copy_n(data_a.begin(), data_a.size(), tensor_a.flat<float>().data());
+  Tensor tensor_b(DataType::DT_FLOAT, {dataCount});
+  std::copy_n(data_b.begin(), data_b.size(), tensor_b.flat<float>().data());
+
   std::vector<Tensor> outputs;
-  TF_CHECK_OK(session->Run({}, {"result:0", "a:0", "b:0"}, {}, &outputs));
-  CHECK_EQ(size_t{3}, outputs.size());
+  TF_CHECK_OK(session->Run({{"a:0", tensor_a}, {"b:0", tensor_b}}, {"result:0"},
+                           {}, &outputs));
+  CHECK_EQ(size_t{1}, outputs.size());
+  const Tensor& tensor_result = outputs[0];
 
-  const Tensor& result = outputs[0];
-  const Tensor& as = outputs[1];
-  const Tensor& bs = outputs[2];
-
-  for (uint32_t i = 0; i < dataCount; ++i) {
-    printf("%i * 2 + %i = %i\n", as.vec<int32_t>()(i), bs.vec<int32_t>()(i),
-           result.vec<int32_t>()(i));
+  for (int i = 0; i < dataCount; ++i) {
+    printf("%f + %f = %f\n", data_a[i], data_b[i],
+           tensor_result.vec<float>()(i));
   }
 }
