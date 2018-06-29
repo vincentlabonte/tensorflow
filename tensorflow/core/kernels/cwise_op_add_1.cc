@@ -12,11 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include <dml.h>
-#include <windows.h>
+
 #include <wrl/client.h>
-#include <dxgi1_5.h>
+
 #include <DXProgrammableCapture.h>
+#include <dml.h>
+#include <dxgi1_5.h>
 
 #include "tensorflow/core/common_runtime/dml/dml_allocator.h"
 #include "tensorflow/core/common_runtime/dml/dml_interface.h"
@@ -99,12 +100,15 @@ class DmlAddBinaryOp : public BinaryOpShared {
     if (state.out_num_elements == 0) {
       return;
     }
+
     const int ndims = state.ndims;
+    if (ndims > DML_TENSOR_DIMENSION_COUNT_NCHW) {
+      return;
+    }
 
     AllocatorAttributes attrs;
     DmlAllocator* allocator =
         static_cast<DmlAllocator*>(ctx->device()->GetAllocator(attrs));
-    // out = new Tensor(allocator, DataType::DT_FLOAT, in0.shape());
 
     const void* in0_data = in0.tensor_data().data();
     const void* in1_data = in1.tensor_data().data();
@@ -131,15 +135,13 @@ class DmlAddBinaryOp : public BinaryOpShared {
     THROW_IF_FAILED(dml_device_context->CreateResource(out_resource.Get(),
                                                        &out_dml_resource));
 
-    DML_TENSOR_DESC dml_input_desc[2] = {
-        {DML_TENSOR_DATA_TYPE_FLOAT32, DML_TENSOR_FLAGS_NONE, 4, {1, 1, 1, 5}},
-        {DML_TENSOR_DATA_TYPE_FLOAT32, DML_TENSOR_FLAGS_NONE, 4, {1, 1, 1, 5}}};
+    DML_TENSOR_DESC dml_input_desc[2] = {CreateDmlTensorDesc(&in0),
+                                         CreateDmlTensorDesc(&in1)};
 
     DML_TENSOR_DESC const* dml_input_ref[2] = {&dml_input_desc[0],
                                                &dml_input_desc[1]};
 
-    DML_TENSOR_DESC dml_output_desc = {
-        DML_TENSOR_DATA_TYPE_FLOAT32, DML_TENSOR_FLAGS_NONE, 4, {1, 1, 1, 5}};
+    DML_TENSOR_DESC dml_output_desc = {CreateDmlTensorDesc(out)};
 
     ComPtr<IDMLOperation> dml_operation;
     THROW_IF_FAILED(dml_device->CreateElementWiseOperation(
@@ -169,6 +171,23 @@ class DmlAddBinaryOp : public BinaryOpShared {
     if (hr != E_NOINTERFACE) {
       ga->EndCapture();
     }
+  }
+
+ private:
+  static DML_TENSOR_DESC CreateDmlTensorDesc(const Tensor* tensor) {
+    if (tensor->dtype() != DataType::DT_FLOAT) throw E_INVALIDARG;
+    int dims = tensor->dims();
+    if (dims > DML_TENSOR_DIMENSION_COUNT_NCHW) throw E_INVALIDARG;
+    DML_TENSOR_DESC dml_tensor_desc = {DML_TENSOR_DATA_TYPE_FLOAT32,
+                                     DML_TENSOR_FLAGS_NONE,
+                                     DML_TENSOR_DIMENSION_COUNT_NCHW,
+                                     {1, 1, 1, 1}};
+    auto dim_sizes = tensor->shape().dim_sizes();
+    for (int i = 0; i < dims; i++) {
+      int index = DML_TENSOR_DIMENSION_COUNT_NCHW - 1 - i;
+      dml_tensor_desc.sizes[index] = dim_sizes[i];
+    }
+    return dml_tensor_desc;
   }
 };
 
