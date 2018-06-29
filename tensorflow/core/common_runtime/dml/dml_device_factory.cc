@@ -17,7 +17,7 @@ limitations under the License.
 
 #include "tensorflow/core/common_runtime/device_factory.h"
 #include "tensorflow/core/common_runtime/dml/dml_device.h"
-
+#include "tensorflow/core/common_runtime/dml/dml_interface.h"
 #include "tensorflow/core/common_runtime/dml/dml_util.h"
 
 namespace tensorflow {
@@ -39,7 +39,7 @@ class DmlDeviceFactory : public DeviceFactory {
       devices->push_back(new DmlDevice(
           options, name, Bytes(256 << 20), DeviceLocality(), "",
           dmlInterface->GetDmlAllocator(), dmlInterface->GetCPUAllocator(),
-          dmlInterface->GetDmlContext()));
+          dmlInterface->GetDmlDeviceContext()));
     }
 
     return Status::OK();

@@ -23,6 +23,18 @@ limitations under the License.
 
 namespace tensorflow {
 
+DmlDevice::DmlDevice(const SessionOptions& options, const string& name,
+                     Bytes memory_limit, const DeviceLocality& locality,
+                     const string& physical_device_desc,
+                     DmlAllocator* dml_allocator, Allocator* cpu_allocator,
+                     DmlDeviceContext* ctx)
+    : LocalDevice(options, Device::BuildDeviceAttributes(name, DEVICE_DML,
+                                                         memory_limit, locality,
+                                                         physical_device_desc)),
+      cpu_allocator_(cpu_allocator),
+      dml_allocator_(dml_allocator),
+      device_context_(ctx) {}
+
 DmlDevice::~DmlDevice() {}
 
 void DmlDevice::Compute(OpKernel* op_kernel, OpKernelContext* context) {
@@ -82,9 +94,7 @@ Status DmlDevice::FillContextMap(const Graph* graph,
   return Status::OK();
 }
 
-Status DmlDevice::Sync() {
-  return Status::OK();
-}
+Status DmlDevice::Sync() { return Status::OK(); }
 
 }  // namespace tensorflow
 

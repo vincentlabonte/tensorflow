@@ -20,56 +20,23 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_COMMON_RUNTIME_DML_DML_DEVICE_H_
 #define TENSORFLOW_CORE_COMMON_RUNTIME_DML_DML_DEVICE_H_
 
-#include "tensorflow/core/common_runtime/local_device.h"
 #include "tensorflow/core/common_runtime/dml/dml_allocator.h"
 #include "tensorflow/core/common_runtime/dml/dml_device_context.h"
+#include "tensorflow/core/common_runtime/local_device.h"
 #include "tensorflow/core/public/session_options.h"
 
+#include <Objbase.h>
+#include <dml.h>
+#include "dml_util.h"
+
 namespace tensorflow {
-
-class DmlInterface {
-  Allocator* m_cpu_allocator_;       // not owned
-  DmlAllocator* m_dml_allocator_;    // owned
-  DmlDeviceContext* m_dml_context_;  // ref counted
-  DmlInterface() {
-    m_cpu_allocator_ = cpu_allocator();
-    m_dml_allocator_ = new DmlAllocator();
-    m_dml_context_ = new DmlDeviceContext();
-  }
-
-  ~DmlInterface() {
-    delete m_dml_allocator_;
-    m_dml_context_->Unref();
-  }
-
-  void AddDevice() {}
-
- public:
-  static const DmlInterface* instance() {
-    // c++11 guarantees that this will be constructed in a thread safe way
-    static const DmlInterface instance;
-    return &instance;
-  }
-
-  DmlAllocator* GetDmlAllocator() const { return m_dml_allocator_; }
-
-  Allocator* GetCPUAllocator() const { return m_cpu_allocator_; }
-
-  DmlDeviceContext* GetDmlContext() const { return m_dml_context_; }
-};
 
 class DmlDevice : public LocalDevice {
  public:
   DmlDevice(const SessionOptions& options, const string& name,
             Bytes memory_limit, const DeviceLocality& locality,
             const string& physical_device_desc, DmlAllocator* dml_allocator,
-            Allocator* cpu_allocator, DmlDeviceContext* ctx)
-      : LocalDevice(options, Device::BuildDeviceAttributes(
-                                 name, DEVICE_DML, memory_limit, locality,
-                                 physical_device_desc)),
-        cpu_allocator_(cpu_allocator),
-        dml_allocator_(dml_allocator),
-        device_context_(ctx) {}
+            Allocator* cpu_allocator, DmlDeviceContext* ctx);
 
   ~DmlDevice() override;
 
@@ -85,9 +52,9 @@ class DmlDevice : public LocalDevice {
   Status Sync() override;
 
  private:
-  Allocator* cpu_allocator_;          // not owned
-  DmlAllocator* dml_allocator_;       // not owned
-  DmlDeviceContext* device_context_;  // not owned
+  Allocator* cpu_allocator_;                    // not owned
+  DmlAllocator* dml_allocator_;                 // not owned
+  DmlDeviceContext* device_context_;			// not owned
 };
 
 }  // namespace tensorflow
