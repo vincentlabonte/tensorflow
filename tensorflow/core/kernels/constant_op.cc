@@ -442,4 +442,9 @@ REGISTER_KERNEL_BUILDER(Name("Placeholder").Device(DEVICE_SYCL), PlaceholderOp);
 REGISTER_KERNEL_BUILDER(Name("PlaceholderV2").Device(DEVICE_SYCL),
                         PlaceholderOp);
 #endif  // TENSORFLOW_USE_SYCL
+
+REGISTER_KERNEL_BUILDER(Name("Placeholder").Device(DEVICE_DML), PlaceholderOp);
+REGISTER_KERNEL_BUILDER(Name("PlaceholderV2").Device(DEVICE_DML),
+                        PlaceholderOp);
+
 }  // namespace tensorflow
