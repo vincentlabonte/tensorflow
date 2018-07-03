@@ -14,7 +14,10 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdio>
+#include <fstream>
 #include <functional>
+#include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -32,21 +35,13 @@ limitations under the License.
 using namespace tensorflow;
 
 int main(int argc, char* argv[]) {
-  const int dataCount = 5;
-  std::vector<float> data_a({1, 6, -4, 8, -7});
-  std::vector<float> data_b({-3, 2, 4, -5, -9});
-
-  Scope root = Scope::NewRootScope();
-
-  auto a = ops::Placeholder(root.WithOpName("a"), DataType::DT_FLOAT,
-                            ops::Placeholder::Shape({dataCount}));
-  auto b = ops::Placeholder(root.WithOpName("b"), DataType::DT_FLOAT,
-                            ops::Placeholder::Shape({dataCount}));
-  //auto b = ops::Const(root.WithOpName("b"), {-3, 2, 4, -5, -9}, {dataCount});
-  auto result = ops::Add(root.WithOpName("result"), a, b);
-
+  std::ifstream file(
+      "C:\\Users\\t-vilab.REDMOND\\Desktop\\onnx_to_tf\\squeezenet.pb",
+      std::ios::in | std::ios::binary);
   GraphDef def;
-  TF_CHECK_OK(root.ToGraphDef(&def));
+  if (!def.ParseFromIstream(&file)) {
+    return -1;
+  }
 
   // Creates a session.
   SessionOptions options;
@@ -57,20 +52,30 @@ int main(int argc, char* argv[]) {
     graph::SetDefaultDevice("/device:DML:0", &def);
   }
   TF_CHECK_OK(session->Create(def));
-
-  Tensor tensor_a(DataType::DT_FLOAT, {dataCount});
-  std::copy_n(data_a.begin(), data_a.size(), tensor_a.flat<float>().data());
-  Tensor tensor_b(DataType::DT_FLOAT, {dataCount});
-  std::copy_n(data_b.begin(), data_b.size(), tensor_b.flat<float>().data());
+  // NumElements = 150528
+  Tensor tensor(DataType::DT_FLOAT, {1, 3, 224, 224});
+  std::ifstream img(
+      "C:\\Users\\t-vilab.REDMOND\\Desktop\\onnx_to_tf\\img\\pug3.txt",
+      std::ios::in | std::ios::binary);
+  std::vector<float> vec;
+  float f;
+  while (img.read(reinterpret_cast<char*>(&f), sizeof(f))) vec.push_back(f);
+  std::copy_n(vec.begin(), vec.size(), tensor.flat<float>().data());
 
   std::vector<Tensor> outputs;
-  TF_CHECK_OK(session->Run({{"a:0", tensor_a}, {"b:0", tensor_b}}, {"result:0"},
-                           {}, &outputs));
+  TF_CHECK_OK(
+      session->Run({{"data_0:0", tensor}}, {"Reshape_1:0"}, {}, &outputs));
   CHECK_EQ(size_t{1}, outputs.size());
   const Tensor& tensor_result = outputs[0];
 
-  for (int i = 0; i < dataCount; ++i) {
-    printf("%f + %f = %f\n", data_a[i], data_b[i],
-           tensor_result.vec<float>()(i));
+  int max_index = 0;
+  float max_value = tensor_result.flat<float>()(0);
+  for (int i = 1; i < 1000; ++i) {
+    float value = tensor_result.flat<float>()(i);
+    if (value > max_value) {
+      max_value = value;
+      max_index = i;
+    }
   }
+  printf("%i\n%f\n", max_index, max_value);
 }
