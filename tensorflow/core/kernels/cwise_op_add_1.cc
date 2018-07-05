@@ -135,8 +135,8 @@ class DmlAddBinaryOp : public BinaryOpShared {
     THROW_IF_FAILED(dml_device_context->CreateResource(out_resource.Get(),
                                                        &out_dml_resource));
 
-    DML_TENSOR_DESC dml_input_desc[2] = {CreateDmlTensorDesc(&in0),
-                                         CreateDmlTensorDesc(&in1)};
+    DML_TENSOR_DESC dml_input_desc[2] = {CreateDmlTensorDesc(&in0, &in1),
+                                         CreateDmlTensorDesc(&in1, &in0)};
 
     DML_TENSOR_DESC const* dml_input_ref[2] = {&dml_input_desc[0],
                                                &dml_input_desc[1]};
@@ -184,8 +184,35 @@ class DmlAddBinaryOp : public BinaryOpShared {
                                      {1, 1, 1, 1}};
     auto dim_sizes = tensor->shape().dim_sizes();
     for (int i = 0; i < dims; i++) {
-      int index = DML_TENSOR_DIMENSION_COUNT_NCHW - 1 - i;
-      dml_tensor_desc.sizes[index] = dim_sizes[i];
+      dml_tensor_desc.sizes[i] = dim_sizes[i];
+    }
+    return dml_tensor_desc;
+  }
+
+  static DML_TENSOR_DESC CreateDmlTensorDesc(const Tensor* tensor, const Tensor* other_tensor) {
+    if (tensor->dtype() != DataType::DT_FLOAT) throw E_INVALIDARG;
+    int dims = tensor->dims();
+    if (dims > DML_TENSOR_DIMENSION_COUNT_NCHW) throw E_INVALIDARG;
+    DML_TENSOR_DESC dml_tensor_desc = {DML_TENSOR_DATA_TYPE_FLOAT32,
+                                       DML_TENSOR_FLAGS_USE_STRIDES,
+                                       DML_TENSOR_DIMENSION_COUNT_NCHW,
+                                       {1, 1, 1, 1}};
+    auto dim_sizes = tensor->shape().dim_sizes();
+    auto other_dim_sizes = other_tensor->shape().dim_sizes();
+    UINT stride_value = 1u;
+    for (int i = dims - 1; i >= 0; i--) {
+      int64 dim_size = dim_sizes[i];
+      int64 other_dim_size = other_dim_sizes[i];
+      int64 max_dim_size = std::max(dim_size, other_dim_size);
+      if (dim_sizes[i] == 1) {
+        dml_tensor_desc.strides[i] = 0;
+      } else if (dim_sizes[i] == max_dim_size) {
+        dml_tensor_desc.strides[i] = stride_value;
+      } else {
+        throw E_INVALIDARG;
+	  }
+      dml_tensor_desc.sizes[i] = max_dim_size;
+      stride_value *= max_dim_size;
     }
     return dml_tensor_desc;
   }

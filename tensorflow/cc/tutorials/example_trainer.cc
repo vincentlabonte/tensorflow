@@ -34,6 +34,19 @@ limitations under the License.
 
 using namespace tensorflow;
 
+void SetDefaultDevice(const string& device, GraphDef* graph_def) {
+  for (int i = 0; i < graph_def->node_size(); ++i) {
+    auto node = graph_def->mutable_node(i);
+    if (node->op() != "Add" || node->op() != "Const" ||
+        node->op() != "Placeholder") {
+      continue;
+	}
+    if (node->device().empty()) {
+      node->set_device(device);
+    }
+  }
+}
+
 int main(int argc, char* argv[]) {
   std::ifstream file(
       "C:\\Users\\t-vilab.REDMOND\\Desktop\\onnx_to_tf\\squeezenet.pb",
@@ -49,7 +62,7 @@ int main(int argc, char* argv[]) {
   if (options.target.empty()) {
     // graph::SetDefaultDevice("/cpu:0", &def);
     // graph::SetDefaultDevice("/device:GPU:0", &def);
-    graph::SetDefaultDevice("/device:DML:0", &def);
+    SetDefaultDevice("/device:DML:0", &def);
   }
   TF_CHECK_OK(session->Create(def));
   // NumElements = 150528
