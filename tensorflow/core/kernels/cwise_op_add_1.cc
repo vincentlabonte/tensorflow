@@ -13,16 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <wrl/client.h>
-
-#include <DXProgrammableCapture.h>
-#include <dml.h>
-#include <dxgi1_5.h>
-
-#include "tensorflow/core/common_runtime/dml/dml_allocator.h"
-#include "tensorflow/core/common_runtime/dml/dml_interface.h"
-#include "tensorflow/core/common_runtime/dml/dml_util.h"
 #include "tensorflow/core/kernels/cwise_ops_common.h"
+#include "tensorflow/core/kernels/cwise_ops_dml_common.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -78,143 +70,12 @@ REGISTER_KERNEL_BUILDER(Name("AddV2")
                         BinaryOp<CPUDevice, functor::add<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
 
-class DmlAddBinaryOp : public BinaryOpShared {
+class DmlAddBinaryOp : public DmlBinaryOp {
  public:
-  explicit DmlAddBinaryOp(OpKernelConstruction* ctx)
-      : BinaryOpShared(ctx, DataTypeToEnum<float>::v(),
-                       DataTypeToEnum<float>::v()) {}
+  explicit DmlAddBinaryOp(OpKernelConstruction* ctx) : DmlBinaryOp(ctx) {}
 
-  void Compute(OpKernelContext* ctx) override {
-    ComPtr<IDXGraphicsAnalysis> ga;
-    HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-    if (hr != E_NOINTERFACE) {
-      ga->BeginCapture();
-    }
-
-    BinaryOpState state(ctx);
-    if (!ctx->status().ok()) return;
-    Tensor* out = state.out;
-    BCast* bcast = &state.bcast;
-    auto& in0 = state.in0;
-    auto& in1 = state.in1;
-    if (state.out_num_elements == 0) {
-      return;
-    }
-
-    const int ndims = state.ndims;
-    if (ndims > DML_TENSOR_DIMENSION_COUNT_NCHW) {
-      return;
-    }
-
-    AllocatorAttributes attrs;
-    DmlAllocator* allocator =
-        static_cast<DmlAllocator*>(ctx->device()->GetAllocator(attrs));
-
-    const void* in0_data = in0.tensor_data().data();
-    const void* in1_data = in1.tensor_data().data();
-    const void* out_data = out->tensor_data().data();
-
-    ComPtr<ID3D12Resource> in0_resource = allocator->DecodeDataHandle(in0_data);
-    ComPtr<ID3D12Resource> in1_resource = allocator->DecodeDataHandle(in1_data);
-    ComPtr<ID3D12Resource> out_resource = allocator->DecodeDataHandle(out_data);
-
-    DmlInterface* dml_interface = DmlInterface::instance();
-    ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
-    ComPtr<IDMLDeviceContext> dml_device_context;
-    THROW_IF_FAILED(dml_device->CreateDeviceContext(
-        dml_interface->GetD3D12Fence(), &dml_device_context));
-
-    ComPtr<IDMLResource> in0_dml_resource;
-    ComPtr<IDMLResource> in1_dml_resource;
-    ComPtr<IDMLResource> out_dml_resource;
-
-    THROW_IF_FAILED(dml_device_context->CreateResource(in0_resource.Get(),
-                                                       &in0_dml_resource));
-    THROW_IF_FAILED(dml_device_context->CreateResource(in1_resource.Get(),
-                                                       &in1_dml_resource));
-    THROW_IF_FAILED(dml_device_context->CreateResource(out_resource.Get(),
-                                                       &out_dml_resource));
-
-    DML_TENSOR_DESC dml_input_desc[2] = {CreateDmlTensorDesc(&in0, &in1),
-                                         CreateDmlTensorDesc(&in1, &in0)};
-
-    DML_TENSOR_DESC const* dml_input_ref[2] = {&dml_input_desc[0],
-                                               &dml_input_desc[1]};
-
-    DML_TENSOR_DESC dml_output_desc = {CreateDmlTensorDesc(out)};
-
-    ComPtr<IDMLOperation> dml_operation;
-    THROW_IF_FAILED(dml_device->CreateElementWiseOperation(
-        DML_ELEMENT_WISE_FUNCTION_ADD, &dml_input_ref[0], 2, &dml_output_desc,
-        nullptr,  // params
-        DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
-
-    THROW_IF_FAILED(
-        dml_device_context->Open(dml_interface->GetFenceValue() + 1));
-
-    IDMLResource* input_resources[2] = {in0_dml_resource.Get(),
-                                        in1_dml_resource.Get()};
-    THROW_IF_FAILED(dml_device_context->AddOperation(
-        dml_operation.Get(), input_resources, 2,
-        out_dml_resource.GetAddressOf(), 1));
-
-    ComPtr<ID3D12CommandList> compute_command_list;
-    THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
-
-    ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
-
-    dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
-        1, compute_command_lists);
-
-    dml_interface->AwaitExecution();
-
-    if (hr != E_NOINTERFACE) {
-      ga->EndCapture();
-    }
-  }
-
- private:
-  static DML_TENSOR_DESC CreateDmlTensorDesc(const Tensor* tensor) {
-    if (tensor->dtype() != DataType::DT_FLOAT) throw E_INVALIDARG;
-    int dims = tensor->dims();
-    if (dims > DML_TENSOR_DIMENSION_COUNT_NCHW) throw E_INVALIDARG;
-    DML_TENSOR_DESC dml_tensor_desc = {DML_TENSOR_DATA_TYPE_FLOAT32,
-                                     DML_TENSOR_FLAGS_NONE,
-                                     DML_TENSOR_DIMENSION_COUNT_NCHW,
-                                     {1, 1, 1, 1}};
-    auto dim_sizes = tensor->shape().dim_sizes();
-    for (int i = 0; i < dims; i++) {
-      dml_tensor_desc.sizes[i] = dim_sizes[i];
-    }
-    return dml_tensor_desc;
-  }
-
-  static DML_TENSOR_DESC CreateDmlTensorDesc(const Tensor* tensor, const Tensor* other_tensor) {
-    if (tensor->dtype() != DataType::DT_FLOAT) throw E_INVALIDARG;
-    int dims = tensor->dims();
-    if (dims > DML_TENSOR_DIMENSION_COUNT_NCHW) throw E_INVALIDARG;
-    DML_TENSOR_DESC dml_tensor_desc = {DML_TENSOR_DATA_TYPE_FLOAT32,
-                                       DML_TENSOR_FLAGS_USE_STRIDES,
-                                       DML_TENSOR_DIMENSION_COUNT_NCHW,
-                                       {1, 1, 1, 1}};
-    auto dim_sizes = tensor->shape().dim_sizes();
-    auto other_dim_sizes = other_tensor->shape().dim_sizes();
-    UINT stride_value = 1u;
-    for (int i = dims - 1; i >= 0; i--) {
-      int64 dim_size = dim_sizes[i];
-      int64 other_dim_size = other_dim_sizes[i];
-      int64 max_dim_size = std::max(dim_size, other_dim_size);
-      if (dim_sizes[i] == 1) {
-        dml_tensor_desc.strides[i] = 0;
-      } else if (dim_sizes[i] == max_dim_size) {
-        dml_tensor_desc.strides[i] = stride_value;
-      } else {
-        throw E_INVALIDARG;
-	  }
-      dml_tensor_desc.sizes[i] = max_dim_size;
-      stride_value *= max_dim_size;
-    }
-    return dml_tensor_desc;
+  DML_ELEMENT_WISE_FUNCTION GetDmlElementWiseFunction() {
+    return DML_ELEMENT_WISE_FUNCTION_ADD;
   }
 };
 
