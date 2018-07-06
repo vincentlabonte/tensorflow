@@ -20,6 +20,7 @@ limitations under the License.
 #include <iterator>
 #include <string>
 #include <vector>
+#include <d3d12sdklayers.h>
 
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/framework/graph.pb.h"
@@ -37,10 +38,10 @@ using namespace tensorflow;
 void SetDefaultDevice(const string& device, GraphDef* graph_def) {
   for (int i = 0; i < graph_def->node_size(); ++i) {
     auto node = graph_def->mutable_node(i);
-    if (node->op() != "Add" || node->op() != "Const" ||
+    if (node->op() != "Add" || node->op() != "Sub" || node->op() != "Const" ||
         node->op() != "Placeholder") {
       continue;
-	}
+    }
     if (node->device().empty()) {
       node->set_device(device);
     }
@@ -55,6 +56,7 @@ int main(int argc, char* argv[]) {
   if (!def.ParseFromIstream(&file)) {
     return -1;
   }
+  file.close();
 
   // Creates a session.
   SessionOptions options;
@@ -73,6 +75,7 @@ int main(int argc, char* argv[]) {
   std::vector<float> vec;
   float f;
   while (img.read(reinterpret_cast<char*>(&f), sizeof(f))) vec.push_back(f);
+  img.close();
   std::copy_n(vec.begin(), vec.size(), tensor.flat<float>().data());
 
   std::vector<Tensor> outputs;

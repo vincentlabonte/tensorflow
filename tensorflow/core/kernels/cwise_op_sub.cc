@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "tensorflow/core/kernels/cwise_ops_common.h"
+#include "tensorflow/core/kernels/cwise_ops_dml_common.h"
 
 namespace tensorflow {
 REGISTER8(BinaryOp, CPU, "Sub", functor::sub, float, Eigen::half, double, int32,
@@ -54,4 +55,17 @@ REGISTER_KERNEL_BUILDER(Name("Sub")
                             .TypeConstraint<int32>("T"),
                         BinaryOp<CPUDevice, functor::sub<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+class DmlSubBinaryOp : public DmlBinaryOp {
+ public:
+  explicit DmlSubBinaryOp(OpKernelConstruction* ctx) : DmlBinaryOp(ctx) {}
+
+  DML_ELEMENT_WISE_FUNCTION GetDmlElementWiseFunction() {
+    return DML_ELEMENT_WISE_FUNCTION_SUBTRACT;
+  }
+};
+
+REGISTER_KERNEL_BUILDER(
+    Name("Sub").Device(DEVICE_DML).TypeConstraint<float>("T"), DmlSubBinaryOp);
+
 }  // namespace tensorflow
