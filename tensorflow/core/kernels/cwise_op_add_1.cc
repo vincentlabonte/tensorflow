@@ -74,7 +74,7 @@ class DmlAddBinaryOp : public DmlBinaryOp {
  public:
   explicit DmlAddBinaryOp(OpKernelConstruction* ctx) : DmlBinaryOp(ctx) {}
 
-  DML_ELEMENT_WISE_FUNCTION GetDmlElementWiseFunction() {
+  DML_ELEMENT_WISE_FUNCTION GetDmlElementWiseFunction() override {
     return DML_ELEMENT_WISE_FUNCTION_ADD;
   }
 };

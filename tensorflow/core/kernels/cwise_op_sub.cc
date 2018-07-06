@@ -60,7 +60,7 @@ class DmlSubBinaryOp : public DmlBinaryOp {
  public:
   explicit DmlSubBinaryOp(OpKernelConstruction* ctx) : DmlBinaryOp(ctx) {}
 
-  DML_ELEMENT_WISE_FUNCTION GetDmlElementWiseFunction() {
+  DML_ELEMENT_WISE_FUNCTION GetDmlElementWiseFunction() override {
     return DML_ELEMENT_WISE_FUNCTION_SUBTRACT;
   }
 };

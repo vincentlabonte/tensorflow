@@ -39,7 +39,7 @@ void SetDefaultDevice(const string& device, GraphDef* graph_def) {
   for (int i = 0; i < graph_def->node_size(); ++i) {
     auto node = graph_def->mutable_node(i);
     if (node->op() != "Add" || node->op() != "Sub" || node->op() != "Const" ||
-        node->op() != "Placeholder") {
+        node->op() != "Relu" || node->op() != "Placeholder") {
       continue;
     }
     if (node->device().empty()) {

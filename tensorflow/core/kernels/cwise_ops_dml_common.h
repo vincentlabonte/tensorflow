@@ -29,6 +29,14 @@ limitations under the License.
 
 namespace tensorflow {
 
+class DmlUtil {
+ public:
+  static DML_TENSOR_DESC CreateDmlTensorDesc(const Tensor* tensor);
+
+  static DML_TENSOR_DESC CreateDmlTensorDesc(const Tensor* tensor,
+                                             const Tensor* other_tensor);
+};
+
 class DmlBinaryOp : public BinaryOpShared {
  public:
   explicit DmlBinaryOp(OpKernelConstruction* ctx)
@@ -38,12 +46,14 @@ class DmlBinaryOp : public BinaryOpShared {
   void Compute(OpKernelContext* ctx) override;
 
   virtual DML_ELEMENT_WISE_FUNCTION GetDmlElementWiseFunction() = 0;
+};
 
- private:
-  static DML_TENSOR_DESC CreateDmlTensorDesc(const Tensor* tensor);
+class DmlActivationOp : public OpKernel {
+ public:
+  explicit DmlActivationOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  void Compute(OpKernelContext* ctx) override;
 
-  static DML_TENSOR_DESC CreateDmlTensorDesc(const Tensor* tensor,
-                                             const Tensor* other_tensor);
+  virtual DML_ACTIVATION_FUNCTION GetDmlActivationFunction() = 0;
 };
 
 }  // end namespace tensorflow
