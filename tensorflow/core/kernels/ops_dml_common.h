@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_KERNELS_CWISE_OPS_DML_COMMON_H_
-#define TENSORFLOW_KERNELS_CWISE_OPS_DML_COMMON_H_
+#ifndef TENSORFLOW_KERNELS_OPS_DML_COMMON_H_
+#define TENSORFLOW_KERNELS_OPS_DML_COMMON_H_
 
 #include <wrl/client.h>
 
@@ -58,4 +58,4 @@ class DmlActivationOp : public OpKernel {
 
 }  // end namespace tensorflow
 
-#endif  // TENSORFLOW_KERNELS_CWISE_OPS_DML_COMMON_H_
+#endif  // TENSORFLOW_KERNELS_OPS_DML_COMMON_H_

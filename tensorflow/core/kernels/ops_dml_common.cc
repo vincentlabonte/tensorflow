@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/core/kernels/cwise_ops_dml_common.h"
+#include "tensorflow/core/kernels/ops_dml_common.h"
 
 namespace tensorflow {
 
@@ -233,7 +233,6 @@ void DmlActivationOp::Compute(OpKernelContext* ctx) {
     ga->EndCapture();
   }
 }
-
 
 class DmlReluOp : public DmlActivationOp {
  public:

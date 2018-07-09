@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "tensorflow/core/kernels/cwise_ops_common.h"
-#include "tensorflow/core/kernels/cwise_ops_dml_common.h"
+#include "tensorflow/core/kernels/ops_dml_common.h"
 
 namespace tensorflow {
 REGISTER8(BinaryOp, CPU, "Sub", functor::sub, float, Eigen::half, double, int32,
