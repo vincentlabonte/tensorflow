@@ -420,6 +420,40 @@ REGISTER_KERNEL_BUILDER(Name("ExpandDims")
                         ExpandDimsOp<int64>);
 #endif  // TENSORFLOW_USE_SYCL
 
+#define REGISTER_DML_KERNEL(type)                            \
+  REGISTER_KERNEL_BUILDER(Name("ExpandDims")                 \
+                              .Device(DEVICE_DML)            \
+                              .TypeConstraint<type>("T")     \
+                              .TypeConstraint<int32>("Tdim") \
+                              .HostMemory("dim"),            \
+                          ExpandDimsOp<int32>);              \
+  REGISTER_KERNEL_BUILDER(Name("ExpandDims")                 \
+                              .Device(DEVICE_DML)            \
+                              .TypeConstraint<type>("T")     \
+                              .TypeConstraint<int64>("Tdim") \
+                              .HostMemory("dim"),            \
+                          ExpandDimsOp<int64>);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_DML_KERNEL);
+TF_CALL_bool(REGISTER_DML_KERNEL);
+#undef REGISTER_DML_KERNEL
+
+REGISTER_KERNEL_BUILDER(Name("ExpandDims")
+                            .Device(DEVICE_DML)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("Tdim")
+                            .HostMemory("input")
+                            .HostMemory("dim")
+                            .HostMemory("output"),
+                        ExpandDimsOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("ExpandDims")
+                            .Device(DEVICE_DML)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int64>("Tdim")
+                            .HostMemory("input")
+                            .HostMemory("dim")
+                            .HostMemory("output"),
+                        ExpandDimsOp<int64>);
+
 // Squeeze ---------------------------------------
 REGISTER_KERNEL_BUILDER(Name("Squeeze").Device(DEVICE_CPU), SqueezeOp);
 
