@@ -94,7 +94,10 @@ Status DmlDevice::FillContextMap(const Graph* graph,
   return Status::OK();
 }
 
-Status DmlDevice::Sync() { return Status::OK(); }
+Status DmlDevice::Sync() {
+  DmlInterface::instance()->AwaitExecution();
+  return Status::OK();
+}
 
 }  // namespace tensorflow
 

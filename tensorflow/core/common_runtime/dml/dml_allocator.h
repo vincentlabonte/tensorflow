@@ -62,7 +62,8 @@ class DmlAllocator : public Allocator {
   // sized as a power of two, and each bucket contains resources twice as large
   // as the previous bucket.
   struct Bucket {
-    std::vector<ComPtr<ID3D12Resource>> resources;
+    mutex mu;
+    std::vector<ComPtr<ID3D12Resource>> resources GUARDED_BY(mu);
   };
 
   static std::ptrdiff_t GetBucketIndexFromSize(uint64_t size);

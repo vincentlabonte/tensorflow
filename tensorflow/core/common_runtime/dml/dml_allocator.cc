@@ -77,7 +77,9 @@ void* DmlAllocator::AllocateRaw(size_t alignment, size_t num_bytes) {
   const uint64_t bucketSize = GetBucketSizeFromIndex(bucketIndex);
 
   ComPtr<ID3D12Resource> resource;
+  bucket.mu.lock();
   if (bucket.resources.empty()) {
+    bucket.mu.unlock();
     // No more resources in this bucket - allocate a new one
     THROW_IF_FAILED(m_device->CreateCommittedResource(
         &m_heapProperties, m_heapFlags,
@@ -87,6 +89,7 @@ void* DmlAllocator::AllocateRaw(size_t alignment, size_t num_bytes) {
     // Retrieve a resource from the bucket
     resource = std::move(bucket.resources.back());
     bucket.resources.pop_back();
+    bucket.mu.unlock();
   }
 
   assert(resource != nullptr);
@@ -120,7 +123,9 @@ void DmlAllocator::DeallocateRaw(void* ptr) {
 
   // Return the resource to the bucket
   Bucket& bucket = m_pool[bucketIndex];
+  bucket.mu.lock();
   bucket.resources.push_back(std::move(allocInfo->resource));
+  bucket.mu.unlock();
 
   // Free the allocation info
   allocInfo.reset();

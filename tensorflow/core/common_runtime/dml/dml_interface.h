@@ -36,8 +36,8 @@ class DmlInterface {
   ComPtr<IDMLDevice> m_dml_device_;
   ComPtr<ID3D12CommandQueue> m_d3d12_command_queue_;
   ComPtr<ID3D12Fence> m_d3d12_fence_;
-  HANDLE event;
-  uint64_t fence_value = 0;
+  mutex fence_value_mu_;
+  uint64_t fence_value_ = 0 GUARDED_BY(fence_value_mu_);
 
   DmlInterface() {
     THROW_IF_FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0,
@@ -57,10 +57,8 @@ class DmlInterface {
         D3D12_RESOURCE_STATE_COMMON);
     m_dml_device_context_ = new DmlDeviceContext();
 
-    event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-
     THROW_IF_FAILED(m_d3d12_device_.Get()->CreateFence(
-        fence_value, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&m_d3d12_fence_)));
+        fence_value_, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&m_d3d12_fence_)));
   }
 
   ~DmlInterface() {
@@ -114,16 +112,22 @@ class DmlInterface {
 
   ID3D12Fence* GetD3D12Fence() const { return m_d3d12_fence_.Get(); }
 
-  uint64_t GetFenceValue() const { return fence_value; }
+  uint64_t GetFenceValue() {
+    mutex_lock l(fence_value_mu_);
+	return fence_value_;
+  }
 
   void AwaitExecution() {
-    ++fence_value;
+    HANDLE fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    fence_value_mu_.lock();
+    ++fence_value_;
     THROW_IF_FAILED(
-        m_d3d12_command_queue_->Signal(m_d3d12_fence_.Get(), fence_value));
+        m_d3d12_command_queue_->Signal(m_d3d12_fence_.Get(), fence_value_));
+    THROW_IF_FAILED(
+        m_d3d12_fence_->SetEventOnCompletion(fence_value_, fence_event));
+    fence_value_mu_.unlock();
 
-    THROW_IF_FAILED(m_d3d12_fence_->SetEventOnCompletion(fence_value, event));
-
-    DWORD retVal = WaitForSingleObject(event, INFINITE);
+    DWORD retVal = WaitForSingleObject(fence_event, INFINITE);
     if (retVal != WAIT_OBJECT_0) {
       DebugBreak();
     }

@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "tensorflow/core/common_runtime/dml/dml_allocator.h"
 #include "tensorflow/core/common_runtime/dml/dml_device_context.h"
+#include "tensorflow/core/common_runtime/dml/dml_interface.h"
 #include "tensorflow/core/common_runtime/local_device.h"
 #include "tensorflow/core/public/session_options.h"
 
