@@ -30,7 +30,7 @@ void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
                                              StatusCallback done) const {
   ComPtr<IDXGraphicsAnalysis> ga;
   HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (hr != E_NOINTERFACE) {
+  if (SUCCEEDED(hr)) {
     ga->BeginCapture();
   }
 
@@ -78,7 +78,7 @@ void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
 
     dml_interface->AwaitExecution();
   }
-  if (hr != E_NOINTERFACE) {
+  if (SUCCEEDED(hr)) {
     ga->EndCapture();
   }
   done(Status::OK());
@@ -90,7 +90,7 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
                                              StatusCallback done) {
   ComPtr<IDXGraphicsAnalysis> ga;
   HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (hr != E_NOINTERFACE) {
+  if (SUCCEEDED(hr)) {
     ga->BeginCapture();
   }
 
@@ -140,7 +140,7 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
     DmlInterface::MapCopyFromResource(readbackBuffer.Get(), dst_data,
                                       total_bytes);
   }
-  if (hr != E_NOINTERFACE) {
+  if (SUCCEEDED(hr)) {
     ga->EndCapture();
   }
   done(Status::OK());

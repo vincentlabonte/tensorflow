@@ -76,7 +76,7 @@ DML_TENSOR_DESC DmlUtil::CreateDmlTensorDesc(const Tensor* tensor,
 void DmlBinaryOp::Compute(OpKernelContext* ctx) {
   ComPtr<IDXGraphicsAnalysis> ga;
   HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (hr != E_NOINTERFACE) {
+  if (SUCCEEDED(hr)) {
     ga->BeginCapture();
   }
 
@@ -157,7 +157,7 @@ void DmlBinaryOp::Compute(OpKernelContext* ctx) {
 
   dml_interface->AwaitExecution();
 
-  if (hr != E_NOINTERFACE) {
+  if (SUCCEEDED(hr)) {
     ga->EndCapture();
   }
 }
@@ -165,7 +165,7 @@ void DmlBinaryOp::Compute(OpKernelContext* ctx) {
 void DmlActivationOp::Compute(OpKernelContext* ctx) {
   ComPtr<IDXGraphicsAnalysis> ga;
   HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (hr != E_NOINTERFACE) {
+  if (SUCCEEDED(hr)) {
     ga->BeginCapture();
   }
 
@@ -229,7 +229,7 @@ void DmlActivationOp::Compute(OpKernelContext* ctx) {
 
   dml_interface->AwaitExecution();
 
-  if (hr != E_NOINTERFACE) {
+  if (SUCCEEDED(hr)) {
     ga->EndCapture();
   }
 }
