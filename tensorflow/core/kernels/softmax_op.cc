@@ -25,6 +25,8 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/kernels/softmax_op_functor.h"
 
+#include "tensorflow/core/kernels/ops_dml_common.h"
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -102,4 +104,17 @@ REGISTER_KERNEL_BUILDER(
     Name("Softmax").Device(DEVICE_SYCL).TypeConstraint<double>("T"),
     SoftmaxOp<SYCLDevice, double>);
 #endif  // TENSORFLOW_USE_SYCL
+
+class DmlSoftmaxOp : public DmlActivationOp {
+ public:
+  explicit DmlSoftmaxOp(OpKernelConstruction* ctx) : DmlActivationOp(ctx){};
+
+  virtual DML_ACTIVATION_FUNCTION GetDmlActivationFunction() {
+    return DML_ACTIVATION_FUNCTION_SOFTMAX;
+  }
+};
+
+REGISTER_KERNEL_BUILDER(
+    Name("Softmax").Device(DEVICE_DML).TypeConstraint<float>("T"),
+    DmlSoftmaxOp);
 }  // namespace tensorflow

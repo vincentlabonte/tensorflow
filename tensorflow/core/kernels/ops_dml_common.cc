@@ -27,7 +27,8 @@ DML_TENSOR_DESC DmlUtil::CreateDmlTensorDesc(const Tensor* tensor) {
                                      {1, 1, 1, 1}};
   auto dim_sizes = tensor->shape().dim_sizes();
   for (int i = 0; i < dims; i++) {
-    dml_tensor_desc.sizes[i] = dim_sizes[i];
+    dml_tensor_desc.sizes[DML_TENSOR_DIMENSION_COUNT_NCHW - 1 - i] =
+        dim_sizes[dims - 1 - i];
   }
   return dml_tensor_desc;
 }
