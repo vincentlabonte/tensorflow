@@ -150,4 +150,7 @@ REGISTER_GPU_HOST_KERNEL(string);
 
 #endif
 
+REGISTER_KERNEL_BUILDER(
+    Name("Identity").Device(DEVICE_DML).TypeConstraint<float>("T"), IdentityOp);
+
 }  // namespace tensorflow
