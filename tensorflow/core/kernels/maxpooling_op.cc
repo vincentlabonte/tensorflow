@@ -20,7 +20,6 @@ limitations under the License.
 #include "tensorflow/core/kernels/maxpooling_op.h"
 
 #include <vector>
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/common_runtime/device.h"
 #include "tensorflow/core/framework/numeric_op.h"
 #include "tensorflow/core/framework/op_kernel.h"
@@ -28,6 +27,7 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/tensor_slice.h"
+#include "tensorflow/core/kernels/bounds_check.h"
 #include "tensorflow/core/kernels/conv_2d.h"
 #include "tensorflow/core/kernels/eigen_pooling.h"
 #include "tensorflow/core/kernels/ops_util.h"
@@ -38,13 +38,24 @@ limitations under the License.
 #include "tensorflow/core/util/padding.h"
 #include "tensorflow/core/util/tensor_format.h"
 #include "tensorflow/core/util/use_cudnn.h"
-#include "tensorflow/core/kernels/bounds_check.h"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
 #if GOOGLE_CUDA
 #include "tensorflow/core/kernels/maxpooling_op_gpu.h"
 #include "tensorflow/core/kernels/pooling_ops_common_gpu.h"
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
+
+#include <wrl/client.h>
+
+#include <DXProgrammableCapture.h>
+#include <dml.h>
+#include <dxgi1_5.h>
+
+#include "tensorflow/core/common_runtime/dml/dml_allocator.h"
+#include "tensorflow/core/common_runtime/dml/dml_interface.h"
+#include "tensorflow/core/common_runtime/dml/dml_util.h"
+#include "tensorflow/core/kernels/dml_util.h"
 
 namespace tensorflow {
 
@@ -1476,5 +1487,179 @@ REGISTER_KERNEL_BUILDER(Name("MaxPoolV2")
 #endif  // GOOGLE_CUDA
 
 #undef REGISTER_MAX_POOL_KERNELS
+
+class DmlMaxPoolingOp : public OpKernel {
+ public:
+  explicit DmlMaxPoolingOp(OpKernelConstruction* context) : OpKernel(context) {
+    string data_format;
+    auto status = context->GetAttr("data_format", &data_format);
+    if (status.ok()) {
+      OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                  errors::InvalidArgument("Invalid data format"));
+      OP_REQUIRES(
+          context, data_format_ == FORMAT_NHWC,
+          errors::InvalidArgument("Default MaxPoolingOp only supports NHWC ",
+                                  "on device type ",
+                                  DeviceTypeString(context->device_type())));
+    } else {
+      data_format_ = FORMAT_NHWC;
+    }
+    OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+    OP_REQUIRES(context, ksize_.size() == 4,
+                errors::InvalidArgument("Sliding window ksize field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 4,
+                errors::InvalidArgument("Sliding window stride field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+                errors::Unimplemented(
+                    "Pooling is not yet supported on the batch dimension."));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& tensor_in = context->input(0);
+    PoolParameters params{context,  ksize_,      stride_,
+                          padding_, FORMAT_NHWC, tensor_in.shape()};
+    if (!context->status().ok()) {
+      return;
+    }
+
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(
+                                0, params.forward_output_shape(), &output));
+
+    ComPtr<IDXGraphicsAnalysis> ga;
+    HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
+    if (SUCCEEDED(hr)) {
+      ga->BeginCapture();
+    }
+
+    AllocatorAttributes attrs;
+    DmlAllocator* allocator =
+        static_cast<DmlAllocator*>(context->device()->GetAllocator(attrs));
+
+    const void* input_data = tensor_in.tensor_data().data();
+    const void* output_data = output->tensor_data().data();
+
+    ComPtr<ID3D12Resource> input_resource =
+        allocator->DecodeDataHandle(input_data);
+    ComPtr<ID3D12Resource> output_resource =
+        allocator->DecodeDataHandle(output_data);
+
+    DmlInterface* dml_interface = DmlInterface::instance();
+    ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
+    ComPtr<IDMLDeviceContext> dml_device_context;
+    THROW_IF_FAILED(dml_device->CreateDeviceContext(
+        dml_interface->GetD3D12Fence(), &dml_device_context));
+
+    ComPtr<IDMLResource> input_dml_resource;
+    ComPtr<IDMLResource> output_dml_resource;
+
+    THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
+                                                       &input_dml_resource));
+    THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
+                                                       &output_dml_resource));
+
+    DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&tensor_in);
+    DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(output);
+    // FORMAT_NHWC;
+    // 'W' col
+    // 'H' row
+    // 'N' batch
+    // 'C' depth
+    // const UINT strides[4] = {1, params.row_stride, params.col_stride,
+    //                         params.depth_stride};
+    // const UINT window_size[4] = {1, params.window_rows, params.window_cols,
+    //                             params.depth_window};
+    // const UINT start_padding[4] = {0, params.pad_rows, params.pad_cols,
+    //                               params.pad_depth};
+    // const UINT end_padding[4] = {0, params.pad_rows, params.pad_cols,
+    //                               params.pad_depth};
+    const UINT strides[4] = {1, params.depth_stride, params.row_stride,
+                             params.col_stride};
+    const UINT window_size[4] = {1, params.depth_window, params.window_rows,
+                                 params.window_cols};
+    const UINT start_padding[4] = {0, params.pad_depth, params.pad_rows,
+                                   params.pad_cols};
+    const UINT end_padding[4] = {0, params.pad_depth, params.pad_rows,
+                                 params.pad_cols};
+
+    UINT val_stride_dml_input_desc = 1;
+    UINT val_stride_dml_output_desc = 1;
+    for (int i = 3; i >= 0; i--) {
+      if (dml_input_desc.sizes[i] > 1) {
+        dml_input_desc.strides[i] = val_stride_dml_input_desc;
+      }
+      val_stride_dml_input_desc *= dml_input_desc.sizes[i];
+      if (dml_output_desc.sizes[i] > 1) {
+        dml_output_desc.strides[i] = val_stride_dml_output_desc;
+      }
+      val_stride_dml_output_desc *= dml_output_desc.sizes[i];
+    }
+
+    const UINT dml_input_desc_sizes[5] = {
+        dml_input_desc.sizes[0], dml_input_desc.sizes[3],
+        dml_input_desc.sizes[1], dml_input_desc.sizes[2]};
+    const UINT dml_output_desc_sizes[5] = {
+        dml_output_desc.sizes[0], dml_output_desc.sizes[3],
+        dml_output_desc.sizes[1], dml_output_desc.sizes[2]};
+    const UINT dml_input_desc_strides[5] = {
+        dml_input_desc.strides[0], dml_input_desc.strides[3],
+        dml_input_desc.strides[1], dml_input_desc.strides[2]};
+    const UINT dml_output_desc_strides[5] = {
+        dml_output_desc.strides[0], dml_output_desc.strides[3],
+        dml_output_desc.strides[1], dml_output_desc.strides[2]};
+
+    for (int i = 3; i >= 0; i--) {
+      dml_input_desc.sizes[i] = dml_input_desc_sizes[i];
+      dml_output_desc.sizes[i] = dml_output_desc_sizes[i];
+      dml_input_desc.strides[i] = dml_input_desc_strides[i];
+      dml_output_desc.strides[i] = dml_output_desc_strides[i];
+    }
+
+	dml_input_desc.flags = DML_TENSOR_FLAGS_USE_STRIDES;
+    dml_output_desc.flags = DML_TENSOR_FLAGS_USE_STRIDES; 
+
+    ComPtr<IDMLOperation> dml_operation;
+    THROW_IF_FAILED(dml_device->CreatePoolingOperation(
+        DML_POOLING_FUNCTION_MAX, &dml_input_desc, &dml_output_desc, strides,
+        window_size, start_padding, end_padding, 4,
+        DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
+
+    THROW_IF_FAILED(
+        dml_device_context->Open(dml_interface->GetFenceValue() + 1));
+
+    IDMLResource* input_resources[1] = {input_dml_resource.Get()};
+    THROW_IF_FAILED(dml_device_context->AddOperation(
+        dml_operation.Get(), input_resources, 1,
+        output_dml_resource.GetAddressOf(), 1));
+
+    ComPtr<ID3D12CommandList> compute_command_list;
+    THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
+
+    ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
+
+    dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
+        1, compute_command_lists);
+
+    dml_interface->AwaitExecution();
+
+    if (SUCCEEDED(hr)) {
+      ga->EndCapture();
+    }
+  }
+
+ private:
+  std::vector<int32> ksize_;
+  std::vector<int32> stride_;
+  Padding padding_;
+  TensorFormat data_format_;
+};
+
+REGISTER_KERNEL_BUILDER(
+    Name("MaxPool").Device(DEVICE_DML).TypeConstraint<float>("T"),
+    DmlMaxPoolingOp);
 
 }  // namespace tensorflow

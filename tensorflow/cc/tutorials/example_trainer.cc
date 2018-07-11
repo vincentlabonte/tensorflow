@@ -41,7 +41,7 @@ void SetDefaultDevice(const string& device, GraphDef* graph_def) {
     if (node->op() != "Add" || node->op() != "Sub" || node->op() != "Const" ||
         node->op() != "Relu" || node->op() != "Placeholder" ||
         node->op() != "Softmax" || node->op() != "Identity" ||
-        node->op() != "ExpandDims") {
+        node->op() != "ExpandDims" || node->op() != "MaxPool") {
       continue;
     }
     if (node->device().empty()) {
