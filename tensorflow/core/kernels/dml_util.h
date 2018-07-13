@@ -17,6 +17,8 @@ class DmlUtil {
 
   static DML_TENSOR_DESC CreateDmlTensorDesc(const Tensor* tensor,
                                              const Tensor* other_tensor);
+
+  static void ConvertNhwcToNchwUsingStrides(DML_TENSOR_DESC& dml_tensor_desc);
 };
 
 }  // namespace tensorflow

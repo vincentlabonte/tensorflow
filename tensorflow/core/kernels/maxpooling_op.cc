@@ -1564,19 +1564,9 @@ class DmlMaxPoolingOp : public OpKernel {
 
     DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&tensor_in);
     DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(output);
-    // FORMAT_NHWC;
-    // 'W' col
-    // 'H' row
-    // 'N' batch
-    // 'C' depth
-    // const UINT strides[4] = {1, params.row_stride, params.col_stride,
-    //                         params.depth_stride};
-    // const UINT window_size[4] = {1, params.window_rows, params.window_cols,
-    //                             params.depth_window};
-    // const UINT start_padding[4] = {0, params.pad_rows, params.pad_cols,
-    //                               params.pad_depth};
-    // const UINT end_padding[4] = {0, params.pad_rows, params.pad_cols,
-    //                               params.pad_depth};
+    DmlUtil::ConvertNhwcToNchwUsingStrides(dml_input_desc);
+    DmlUtil::ConvertNhwcToNchwUsingStrides(dml_output_desc);
+
     const UINT strides[4] = {1, params.depth_stride, params.row_stride,
                              params.col_stride};
     const UINT window_size[4] = {1, params.depth_window, params.window_rows,
@@ -1585,42 +1575,6 @@ class DmlMaxPoolingOp : public OpKernel {
                                    params.pad_cols};
     const UINT end_padding[4] = {0, params.pad_depth, params.pad_rows,
                                  params.pad_cols};
-
-    UINT val_stride_dml_input_desc = 1;
-    UINT val_stride_dml_output_desc = 1;
-    for (int i = 3; i >= 0; i--) {
-      if (dml_input_desc.sizes[i] > 1) {
-        dml_input_desc.strides[i] = val_stride_dml_input_desc;
-      }
-      val_stride_dml_input_desc *= dml_input_desc.sizes[i];
-      if (dml_output_desc.sizes[i] > 1) {
-        dml_output_desc.strides[i] = val_stride_dml_output_desc;
-      }
-      val_stride_dml_output_desc *= dml_output_desc.sizes[i];
-    }
-
-    const UINT dml_input_desc_sizes[5] = {
-        dml_input_desc.sizes[0], dml_input_desc.sizes[3],
-        dml_input_desc.sizes[1], dml_input_desc.sizes[2]};
-    const UINT dml_output_desc_sizes[5] = {
-        dml_output_desc.sizes[0], dml_output_desc.sizes[3],
-        dml_output_desc.sizes[1], dml_output_desc.sizes[2]};
-    const UINT dml_input_desc_strides[5] = {
-        dml_input_desc.strides[0], dml_input_desc.strides[3],
-        dml_input_desc.strides[1], dml_input_desc.strides[2]};
-    const UINT dml_output_desc_strides[5] = {
-        dml_output_desc.strides[0], dml_output_desc.strides[3],
-        dml_output_desc.strides[1], dml_output_desc.strides[2]};
-
-    for (int i = 3; i >= 0; i--) {
-      dml_input_desc.sizes[i] = dml_input_desc_sizes[i];
-      dml_output_desc.sizes[i] = dml_output_desc_sizes[i];
-      dml_input_desc.strides[i] = dml_input_desc_strides[i];
-      dml_output_desc.strides[i] = dml_output_desc_strides[i];
-    }
-
-	dml_input_desc.flags = DML_TENSOR_FLAGS_USE_STRIDES;
-    dml_output_desc.flags = DML_TENSOR_FLAGS_USE_STRIDES; 
 
     ComPtr<IDMLOperation> dml_operation;
     THROW_IF_FAILED(dml_device->CreatePoolingOperation(

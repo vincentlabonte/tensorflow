@@ -59,4 +59,28 @@ DML_TENSOR_DESC DmlUtil::CreateDmlTensorDesc(const Tensor* tensor,
   return dml_tensor_desc;
 }
 
+void DmlUtil::ConvertNhwcToNchwUsingStrides(DML_TENSOR_DESC& dml_tensor_desc) {
+  UINT val_stride_dml_tensor_desc = 1;
+  for (int i = DML_TENSOR_DIMENSION_COUNT_NCHW - 1; i >= 0; i--) {
+    if (dml_tensor_desc.sizes[i] > 1) {
+      dml_tensor_desc.strides[i] = val_stride_dml_tensor_desc;
+    }
+    val_stride_dml_tensor_desc *= dml_tensor_desc.sizes[i];
+  }
+
+  const UINT dml_tensor_desc_sizes[5] = {
+      dml_tensor_desc.sizes[0], dml_tensor_desc.sizes[3],
+      dml_tensor_desc.sizes[1], dml_tensor_desc.sizes[2]};
+  const UINT dml_tensor_desc_strides[5] = {
+      dml_tensor_desc.strides[0], dml_tensor_desc.strides[3],
+      dml_tensor_desc.strides[1], dml_tensor_desc.strides[2]};
+
+  for (int i = DML_TENSOR_DIMENSION_COUNT_NCHW - 1; i >= 0; i--) {
+    dml_tensor_desc.sizes[i] = dml_tensor_desc_sizes[i];
+    dml_tensor_desc.strides[i] = dml_tensor_desc_strides[i];
+  }
+
+  dml_tensor_desc.flags = DML_TENSOR_FLAGS_USE_STRIDES;
+}
+
 }  // namespace tensorflow
