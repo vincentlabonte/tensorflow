@@ -122,6 +122,13 @@ class ConjugateTransposeSyclOp : public TransposeOp {
 };
 #endif  // TENSORFLOW_USE_SYCL
 
+class DmlTransposeOp : public TransposeOp {
+ public:
+  explicit DmlTransposeOp(OpKernelConstruction* ctx) : TransposeOp(ctx) {}
+  Status DoTranspose(OpKernelContext* ctx, const Tensor& in,
+                     gtl::ArraySlice<int32> perm, Tensor* out) override;
+};
+
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_KERNELS_TRANSPOSE_OP_H_

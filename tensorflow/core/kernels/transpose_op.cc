@@ -29,6 +29,17 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/platform/logging.h"
 
+#include <wrl/client.h>
+
+#include <DXProgrammableCapture.h>
+#include <dml.h>
+#include <dxgi1_5.h>
+
+#include "tensorflow/core/common_runtime/dml/dml_allocator.h"
+#include "tensorflow/core/common_runtime/dml/dml_interface.h"
+#include "tensorflow/core/common_runtime/dml/dml_util.h"
+#include "tensorflow/core/kernels/dml_util.h" 
+
 namespace tensorflow {
 
 // inv = InvertPermutationOp(T<int32/int64> p) takes a permutation of
@@ -310,4 +321,120 @@ Status ConjugateTransposeSyclOp::DoTranspose(OpKernelContext* ctx,
 TF_CALL_POD_TYPES(REGISTER);
 #undef REGISTER
 #endif
+
+Status DmlTransposeOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
+                                   gtl::ArraySlice<int32> perm, Tensor* out) {
+  gtl::InlinedVector<int64, 4> in_dim_sizes = in.shape().dim_sizes();
+
+  if (in.dims() > DML_TENSOR_DIMENSION_COUNT_NCHW) throw E_INVALIDARG;
+
+  // Calculate strides from original shape.
+  std::vector<uint32_t> input_strides(in_dim_sizes.size());
+  input_strides.back() = 1;
+  for (int i = static_cast<int>(input_strides.size()) - 2; i >= 0; i--) {
+    input_strides[i] =
+        input_strides[i + 1] * static_cast<uint32_t>(in_dim_sizes[i + 1]);
+  }
+
+  // Input tensor will use strides to perm the permuted copy.
+  DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&in);
+  dml_input_desc.flags = DML_TENSOR_FLAGS_USE_STRIDES;
+
+  // Output tensor will have same shape as input, but no striding.
+  DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(out);
+
+  // Fill leading tensor desc sizes/strides with defaults.
+  const int leadingDims = static_cast<int32_t>(DML_TENSOR_DIMENSION_COUNT_NCHW -
+                                               in_dim_sizes.size());
+  for (int dimDML = 0; dimDML < leadingDims; ++dimDML) {
+    dml_input_desc.sizes[dimDML] = 1;
+    dml_output_desc.sizes[dimDML] = 1;
+    dml_input_desc.strides[dimDML] = 0;
+    dml_output_desc.strides[dimDML] = 0;
+  }
+
+  // Permute the shape and strides.
+  gtl::InlinedVector<int64, 4> out_dim_sizes;
+  for (int dimInput = 0; dimInput < in_dim_sizes.size(); ++dimInput) {
+    int dim_dml = dimInput + leadingDims;
+    int dimPermuted = perm[dimInput];
+
+    out_dim_sizes[dimInput] = in_dim_sizes[dimPermuted];
+
+    dml_input_desc.sizes[dim_dml] =
+        static_cast<int32_t>(in_dim_sizes[dimPermuted]);
+    dml_output_desc.sizes[dim_dml] =
+        static_cast<int32_t>(in_dim_sizes[dimPermuted]);
+    dml_input_desc.strides[dim_dml] = input_strides[dimPermuted];
+    dml_output_desc.strides[dim_dml] = 0;
+  }
+
+  ComPtr<IDXGraphicsAnalysis> ga;
+  HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
+  if (SUCCEEDED(hr)) {
+    ga->BeginCapture();
+  }
+
+  AllocatorAttributes attrs;
+  DmlAllocator* allocator =
+      static_cast<DmlAllocator*>(ctx->device()->GetAllocator(attrs));
+
+  const void* input_data = in.tensor_data().data();
+  const void* output_data = out->tensor_data().data();
+
+  ComPtr<ID3D12Resource> input_resource =
+      allocator->DecodeDataHandle(input_data);
+  ComPtr<ID3D12Resource> output_resource =
+      allocator->DecodeDataHandle(output_data);
+
+  DmlInterface* dml_interface = DmlInterface::instance();
+  ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
+  ComPtr<IDMLDeviceContext> dml_device_context;
+  THROW_IF_FAILED(dml_device->CreateDeviceContext(
+      dml_interface->GetD3D12Fence(), &dml_device_context));
+
+  ComPtr<IDMLResource> input_dml_resource;
+  ComPtr<IDMLResource> output_dml_resource;
+
+  THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
+                                                     &input_dml_resource));
+  THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
+                                                     &output_dml_resource));
+
+  const DML_TENSOR_DESC* dml_input_descs[1] = {&dml_input_desc};
+
+  ComPtr<IDMLOperation>
+      dml_operation;
+  THROW_IF_FAILED(dml_device->CreateElementWiseOperation(
+      DML_ELEMENT_WISE_FUNCTION_IDENTITY, dml_input_descs, 1, &dml_output_desc,
+      nullptr, DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
+
+  THROW_IF_FAILED(dml_device_context->Open(dml_interface->GetFenceValue() + 1));
+
+  IDMLResource* input_resources[1] = {input_dml_resource.Get()};
+  THROW_IF_FAILED(
+      dml_device_context->AddOperation(dml_operation.Get(), input_resources, 1,
+                                       output_dml_resource.GetAddressOf(), 1));
+
+  ComPtr<ID3D12CommandList> compute_command_list;
+  THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
+
+  ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
+
+  dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
+      1, compute_command_lists);
+
+  dml_interface->AwaitExecution();
+
+  if (SUCCEEDED(hr)) {
+    ga->EndCapture();
+  }
+}
+
+REGISTER_KERNEL_BUILDER(Name("Transpose")
+                            .Device(DEVICE_DML)
+                            .TypeConstraint<float>("T")
+                            .HostMemory("perm"),
+                        DmlTransposeOp);
+
 }  // namespace tensorflow
