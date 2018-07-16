@@ -140,7 +140,9 @@ REGISTER_SYCL_KERNEL(SYCL, bool);
 #undef REGISTER_SYCL_KERNEL
 #endif
 
-REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_DML), ConstantOp);
+REGISTER_KERNEL_BUILDER(
+    Name("Const").Device(DEVICE_DML).TypeConstraint<float>("dtype"),
+    ConstantOp);
 
 HostConstantOp::HostConstantOp(OpKernelConstruction* ctx)
     : OpKernel(ctx), tensor_(ctx->output_type(0)) {
@@ -179,6 +181,12 @@ REGISTER_KERNEL_BUILDER(Name("Const")
                             .TypeConstraint<int32>("dtype"),
                         HostConstantOp);
 #endif  // TENSORFLOW_USE_SYCL
+
+REGISTER_KERNEL_BUILDER(Name("Const")
+                            .Device(DEVICE_DML)
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("dtype"),
+                        HostConstantOp);
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
