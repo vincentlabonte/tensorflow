@@ -33,6 +33,18 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
 
+#include <wrl/client.h>
+
+#include <DXProgrammableCapture.h>
+#include <dml.h>
+#include <dxgi1_5.h>
+#include <vector>
+
+#include "tensorflow/core/common_runtime/dml/dml_allocator.h"
+#include "tensorflow/core/common_runtime/dml/dml_interface.h"
+#include "tensorflow/core/common_runtime/dml/dml_util.h"
+#include "tensorflow/core/kernels/dml_util.h"
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -437,5 +449,209 @@ TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SYCL);
 #undef REGISTER_SYCL
 
 #endif  // TENSORFLOW_USE_SYCL
+
+// NOT TESTED
+class DmlSplitOp : public OpKernel {
+ public:
+  explicit DmlSplitOp(OpKernelConstruction* c) : OpKernel(c) {}
+
+  void ComputeEasyCases(OpKernelContext* context, bool* done) {
+    const Tensor& input = context->input(1);
+    const TensorShape& input_shape = input.shape();
+    const int32 split_dim_orig = context->input(0).flat<int32>()(0);
+    const int32 split_dim =
+        split_dim_orig < 0 ? split_dim_orig + input.dims() : split_dim_orig;
+    const int32 num_split = num_outputs();
+
+    OP_REQUIRES(
+        context, 0 <= split_dim && split_dim < input_shape.dims(),
+        errors::InvalidArgument("-input rank(-", input.dims(),
+                                ") <= split_dim < input rank (", input.dims(),
+                                "), but got ", split_dim_orig));
+
+    OP_REQUIRES(
+        context, num_split > 0,
+        errors::InvalidArgument(
+            "Number of ways to split should be > 0, but got ", num_split));
+
+    OP_REQUIRES(context, input_shape.dim_size(split_dim) % num_split == 0,
+                errors::InvalidArgument(
+                    "Number of ways to split should evenly divide the split "
+                    "dimension, but got split_dim ",
+                    split_dim, " (size = ", input_shape.dim_size(split_dim),
+                    ") ", "and num_split ", num_split));
+    // Special case 1: num_split == 1. Nothing to do.
+    if (num_split == 1) {
+      VLOG(1) << "Split identity";
+      context->set_output(0, context->input(1));
+      *done = true;
+      return;
+    }
+
+    // Special case 2: split along the 1st dimension. We can share the
+    // underlying buffer.
+    //
+    // Apply this optimization conservatively: if input is aligned,
+    // the resulting tensors must be aligned. It's conservative
+    // because if the immediate consumer of the resulting tensors are
+    // not using eigen for computation, its perfectly fine to avoid
+    // the copying.
+    if ((split_dim == 0) && IsInnerDimsSizeAligned<float>(input_shape)) {
+      VLOG(1) << "Slice dim 0: " << input_shape.DebugString();
+      const int64 delta = input_shape.dim_size(0) / num_split;
+      for (int i = 0; i < num_split; ++i) {
+        context->set_output(i, input.Slice(i * delta, (i + 1) * delta));
+      }
+      *done = true;
+      return;
+    }
+  }
+
+  template <typename IndexType>
+  std::tuple<IndexType, IndexType, IndexType> SetDims(
+      const TensorShape& input_shape, int32 split_dim) const {
+    static_assert(std::is_integral<IndexType>::value,
+                  "IndexType must be an integer type");
+    int32 prefix_dim_size = 1;
+    for (int i = 0; i < split_dim; ++i) {
+      prefix_dim_size *= input_shape.dim_size(i);
+    }
+
+    // Caller must ensure that dim_size and suffix_dim_size are <
+    // std::numeric_limits<IndexType>::max()
+    IndexType split_dim_size =
+        static_cast<IndexType>(input_shape.dim_size(split_dim));
+
+    IndexType suffix_dim_size = 1;
+    for (int i = split_dim + 1; i < input_shape.dims(); ++i) {
+      suffix_dim_size *= static_cast<IndexType>(input_shape.dim_size(i));
+    }
+    return std::make_tuple(prefix_dim_size, split_dim_size, suffix_dim_size);
+  }
+
+  void Compute(OpKernelContext* context) override {
+    bool done = false;
+    ComputeEasyCases(context, &done);
+    if (!context->status().ok() || done) {
+      return;
+    }
+    const Tensor& input = context->input(1);
+    const TensorShape& input_shape = input.shape();
+    const int32 split_dim_orig = context->input(0).flat<int32>()(0);
+    const int32 split_dim =
+        split_dim_orig < 0 ? split_dim_orig + input.dims() : split_dim_orig;
+    const int32 num_split = num_outputs();
+
+    // Android also uses int32 indexing, so check here also.
+    OP_REQUIRES(
+        context,
+        FastBoundsCheck(input.NumElements(),
+                        std::numeric_limits<Eigen::DenseIndex>::max()),
+        errors::InvalidArgument("Split requires input size < ",
+                                std::numeric_limits<Eigen::DenseIndex>::max()));
+
+    Eigen::DenseIndex prefix_dim_size;
+    Eigen::DenseIndex split_dim_size;
+    Eigen::DenseIndex suffix_dim_size;
+
+    std::tie(prefix_dim_size, split_dim_size, suffix_dim_size) = SetDims<Eigen::DenseIndex>(input_shape, split_dim);
+
+    const int64 split_dim_output_size = split_dim_size / num_split;
+    TensorShape output_shape(input_shape);
+    output_shape.set_dim(split_dim, split_dim_output_size);
+
+	std::vector<Tensor*> outputs(num_split);
+    for (int i = 0; i < num_split; ++i) {
+      OP_REQUIRES_OK(context,
+                     context->allocate_output(i, output_shape, &outputs[i]));
+    }
+
+    ComPtr<IDXGraphicsAnalysis> ga;
+    HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
+    if (SUCCEEDED(hr)) {
+      ga->BeginCapture();
+    }
+
+    AllocatorAttributes attrs;
+    DmlAllocator* allocator =
+        static_cast<DmlAllocator*>(context->device()->GetAllocator(attrs));
+
+    const void* input_data = input.tensor_data().data();
+    std::vector<const void*> output_data_vector(num_split);
+    for (int i = 0; i < num_split; i++) {
+      output_data_vector[i] = outputs[i]->tensor_data().data();
+	}
+
+    ComPtr<ID3D12Resource> input_resource =
+        allocator->DecodeDataHandle(input_data);
+    std::vector<ComPtr<ID3D12Resource>> output_resources(num_split);
+    for (int i = 0; i < num_split; i++) {
+      output_resources[i] = allocator->DecodeDataHandle(output_data_vector[i]);
+    }   
+
+    DmlInterface* dml_interface = DmlInterface::instance();
+    ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
+    ComPtr<IDMLDeviceContext> dml_device_context;
+    THROW_IF_FAILED(dml_device->CreateDeviceContext(
+        dml_interface->GetD3D12Fence(), &dml_device_context));
+
+    ComPtr<IDMLResource> input_dml_resource;
+    ComPtr<IDMLResource> filter_dml_resource;
+    std::vector<ComPtr<IDMLResource>> output_dml_resources(num_split);
+
+    THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
+                                                       &input_dml_resource));
+    for (int i = 0; i < num_split; i++) {
+      THROW_IF_FAILED(dml_device_context->CreateResource(output_resources[i].Get(),
+                                                         &output_dml_resources[i]));
+    }
+
+    DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&input);
+    std::vector<DML_TENSOR_DESC> dml_output_desc(num_split);
+    for (int i = 0; i < num_split; i++) {
+      dml_output_desc[i] = DmlUtil::CreateDmlTensorDesc(outputs[i]);
+    }
+
+	DML_TENSOR_DESC* dml_input_descs = dml_output_desc.data();
+
+    ComPtr<IDMLOperation> dml_operation;
+    THROW_IF_FAILED(dml_device->CreateSplitOperation(
+        &dml_input_desc, &(dml_input_descs), num_split,
+        split_dim, DML_EXECUTION_HINT_FLAGS_NONE,
+        &dml_operation));
+
+    THROW_IF_FAILED(
+        dml_device_context->Open(dml_interface->GetFenceValue() + 1));
+
+    IDMLResource* input_resources[2] = {input_dml_resource.Get(),
+                                        filter_dml_resource.Get()};
+    std::vector<IDMLResource*> output_resource_vector(num_split);
+    for (int i = 0; i < num_split; i++) {
+      output_resource_vector[i] = output_dml_resources[i].Get();
+    }
+    THROW_IF_FAILED(dml_device_context->AddOperation(
+        dml_operation.Get(), input_resources, 2, output_resource_vector.data(), 1));
+
+    ComPtr<ID3D12CommandList> compute_command_list;
+    THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
+
+    ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
+
+    dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
+        1, compute_command_lists);
+
+    dml_interface->AwaitExecution();
+
+    if (SUCCEEDED(hr)) {
+      ga->EndCapture();
+    }
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("Split")
+                            .Device(DEVICE_DML)
+                            .TypeConstraint<float>("T")
+                            .HostMemory("split_dim"),
+                        DmlSplitOp);
 
 }  // end namespace tensorflow
