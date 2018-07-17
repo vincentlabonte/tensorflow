@@ -607,16 +607,19 @@ class DmlSplitOp : public OpKernel {
     }
 
     DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&input);
-    std::vector<DML_TENSOR_DESC> dml_output_desc(num_split);
+    std::vector<DML_TENSOR_DESC> dml_output_descs(num_split);
     for (int i = 0; i < num_split; i++) {
-      dml_output_desc[i] = DmlUtil::CreateDmlTensorDesc(outputs[i]);
+      dml_output_descs[i] = DmlUtil::CreateDmlTensorDesc(outputs[i]);
     }
 
-	DML_TENSOR_DESC* dml_input_descs = dml_output_desc.data();
+	std::vector<DML_TENSOR_DESC*> dml_output_desc_ptrs(num_split);
+    for (int i = 0; i < num_split; i++) {
+          dml_output_desc_ptrs[i] = &(dml_output_descs[i]);
+    }
 
     ComPtr<IDMLOperation> dml_operation;
     THROW_IF_FAILED(dml_device->CreateSplitOperation(
-        &dml_input_desc, &(dml_input_descs), num_split,
+        &dml_input_desc, dml_output_desc_ptrs.data(), num_split,
         split_dim, DML_EXECUTION_HINT_FLAGS_NONE,
         &dml_operation));
 
