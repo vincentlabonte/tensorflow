@@ -1,7 +1,7 @@
 #ifndef TENSORFLOW_KERNELS_DML_REDUCTION_OPS_COMMON_H_
 #define TENSORFLOW_KERNELS_DML_REDUCTION_OPS_COMMON_H_
 
-#include "tensorflow\core\kernels\reduction_ops_common.h"
+#include "tensorflow/core/kernels/reduction_ops_common.h"
 
 #include <wrl/client.h>
 
