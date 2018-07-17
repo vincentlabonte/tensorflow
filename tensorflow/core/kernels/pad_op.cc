@@ -34,6 +34,17 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
 
+#include <wrl/client.h>
+
+#include <DXProgrammableCapture.h>
+#include <dml.h>
+#include <dxgi1_5.h>
+
+#include "tensorflow/core/common_runtime/dml/dml_allocator.h"
+#include "tensorflow/core/common_runtime/dml/dml_interface.h"
+#include "tensorflow/core/common_runtime/dml/dml_util.h"
+#include "tensorflow/core/kernels/dml_util.h"
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -462,5 +473,117 @@ REGISTER_KERNEL_BUILDER(Name("PadV2")
                         PadOp<CPUDevice, int32, int64>);
 #undef REGISTER_SYCL_KERNEL
 #endif  // TENSORFLOW_USE_SYCL
+
+class DmlPadOp : public OpKernel {
+ public:
+  explicit DmlPadOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& data = context->input(0);
+    const Tensor& pads = context->input(1);
+    const int dims = data.dims();
+
+    const int fixed_dims =
+        (allow_legacy_scalars() && dims == 0 && data.dim_size(0) == 1) ? 1
+                                                                       : dims;
+    OP_REQUIRES(
+        context, fixed_dims == pads.dim_size(0),
+        errors::InvalidArgument(
+            "The first dimension of paddings must be the rank of inputs",
+            pads.shape().DebugString(), " ", data.shape().DebugString()));
+
+    // Compute the shape of the output tensor, and allocate it.
+    TensorShape output_shape;
+    typename TTypes<int32>::ConstMatrix paddings = pads.matrix<int32>();
+    for (int d = 0; d < fixed_dims; ++d) {
+      const int32 before_d = paddings(d, 0);  // Pad before existing elements.
+      const int32 after_d = paddings(d, 1);   // Pad after existing elements.
+      OP_REQUIRES(context, before_d >= 0 && after_d >= 0,
+                  errors::InvalidArgument("Paddings must be non-negative: ",
+                                          before_d, " ", after_d));
+      const int64 size_d =
+          (allow_legacy_scalars() && d == data.dims()) ? 1 : data.dim_size(d);
+      output_shape.AddDim(before_d + size_d + after_d);
+    }
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
+
+    ComPtr<IDXGraphicsAnalysis> ga;
+    HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
+    if (SUCCEEDED(hr)) {
+      ga->BeginCapture();
+    }
+
+    AllocatorAttributes attrs;
+    DmlAllocator* allocator =
+        static_cast<DmlAllocator*>(context->device()->GetAllocator(attrs));
+
+    const void* input_data = data.tensor_data().data();
+    const void* output_data = output->tensor_data().data();
+
+    ComPtr<ID3D12Resource> input_resource =
+        allocator->DecodeDataHandle(input_data);
+    ComPtr<ID3D12Resource> output_resource =
+        allocator->DecodeDataHandle(output_data);
+
+    DmlInterface* dml_interface = DmlInterface::instance();
+    ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
+    ComPtr<IDMLDeviceContext> dml_device_context;
+    THROW_IF_FAILED(dml_device->CreateDeviceContext(
+        dml_interface->GetD3D12Fence(), &dml_device_context));
+
+    ComPtr<IDMLResource> input_dml_resource;
+    ComPtr<IDMLResource> output_dml_resource;
+
+    THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
+                                                       &input_dml_resource));
+    THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
+                                                       &output_dml_resource));
+
+    DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&data);
+    DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(output);
+
+    UINT start_padding[5];
+    UINT end_padding[5];
+    for (int d = 0; d < fixed_dims; ++d) {
+      start_padding[d] = paddings(d, 0);  // Pad before existing elements.
+      end_padding[d] = paddings(d, 1);    // Pad after existing elements.
+    }
+
+    ComPtr<IDMLOperation> dml_operation;
+    THROW_IF_FAILED(dml_device->CreatePaddingOperation(
+        &dml_input_desc, &dml_output_desc, DML_PADDING_MODE_CONSTANT, 0.f,
+        start_padding, end_padding, fixed_dims, DML_EXECUTION_HINT_FLAGS_NONE,
+        &dml_operation));
+
+    THROW_IF_FAILED(
+        dml_device_context->Open(dml_interface->GetFenceValue() + 1));
+
+    THROW_IF_FAILED(dml_device_context->AddOperation(
+        dml_operation.Get(), input_dml_resource.GetAddressOf(), 1,
+        output_dml_resource.GetAddressOf(), 1));
+
+    ComPtr<ID3D12CommandList> compute_command_list;
+    THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
+
+    ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
+
+    dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
+        1, compute_command_lists);
+
+    dml_interface->AwaitExecution();
+
+    if (SUCCEEDED(hr)) {
+      ga->EndCapture();
+    }
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("Pad")
+                            .Device(DEVICE_DML)
+                            .TypeConstraint<float>("T")
+                            .TypeConstraint<int32>("Tpaddings")
+                            .HostMemory("paddings"),
+                        DmlPadOp);
 
 }  // end namespace tensorflow
