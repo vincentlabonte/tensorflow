@@ -29,6 +29,17 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
+#include <wrl/client.h>
+
+#include <DXProgrammableCapture.h>
+#include <dml.h>
+#include <dxgi1_5.h>
+
+#include "tensorflow/core/common_runtime/dml/dml_allocator.h"
+#include "tensorflow/core/common_runtime/dml/dml_interface.h"
+#include "tensorflow/core/common_runtime/dml/dml_util.h"
+#include "tensorflow/core/kernels/dml_util.h"
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -271,6 +282,217 @@ REGISTER_KERNEL_BUILDER(Name("ConcatV2")
 
 #undef REGISTER_SYCL
 #endif  // TENSORFLOW_USE_SYCL
+
+template <typename T, AxisArgumentName AxisArgName>
+class DmlConcatBaseOp : public OpKernel {
+ public:
+  typedef std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>
+      ConstMatrixVector;
+
+  explicit DmlConcatBaseOp(OpKernelConstruction* c) : OpKernel(c) {}
+
+  void Compute(OpKernelContext* c) override {
+    const Tensor* concat_dim_tensor;
+    const char* axis_attribute_name =
+        AxisArgName == NAME_IS_AXIS
+            ? "axis"
+            : AxisArgName == NAME_IS_CONCAT_DIM ? "concat_dim" : "<invalid>";
+    OP_REQUIRES_OK(c, c->input(axis_attribute_name, &concat_dim_tensor));
+    OP_REQUIRES(c, IsLegacyScalar(concat_dim_tensor->shape()),
+                errors::InvalidArgument(
+                    axis_attribute_name,
+                    " tensor should be a scalar integer, but got shape ",
+                    concat_dim_tensor->shape().DebugString()));
+    int64 concat_dim;
+    // In case of ConcatV2, "axis" could be int32 or int64
+    if (AxisArgName == NAME_IS_AXIS) {
+      OP_REQUIRES(
+          c,
+          (concat_dim_tensor->dtype() == DT_INT32 ||
+           concat_dim_tensor->dtype() == DT_INT64),
+          errors::InvalidArgument(axis_attribute_name,
+                                  " tensor should be int32 or int64, but got ",
+                                  concat_dim_tensor->dtype()));
+    } else {
+      OP_REQUIRES(c, (concat_dim_tensor->dtype() == DT_INT32),
+                  errors::InvalidArgument(axis_attribute_name,
+                                          " tensor should be int32, but got ",
+                                          concat_dim_tensor->dtype()));
+    }
+    if (concat_dim_tensor->dtype() == DT_INT32) {
+      concat_dim =
+          internal::SubtleMustCopy(concat_dim_tensor->scalar<int32>()());
+    } else {
+      concat_dim =
+          internal::SubtleMustCopy(concat_dim_tensor->scalar<int64>()());
+    }
+
+    OpInputList values;
+    OP_REQUIRES_OK(c, c->input_list("values", &values));
+    const int N = values.size();
+    const int input_dims = values[0].dims();
+    const TensorShape& input_shape = values[0].shape();
+
+    int32 axis = concat_dim < 0 ? concat_dim + input_dims : concat_dim;
+    OP_REQUIRES(c,
+                (0 <= axis && axis < input_dims) ||
+                    (allow_legacy_scalars() && concat_dim == 0),
+                errors::InvalidArgument(
+                    "ConcatOp : Expected concatenating dimensions in the range "
+                    "[",
+                    -input_dims, ", ", input_dims, "), but got ", concat_dim));
+    // Note that we reduce the concat of n-dimensional tensors into a two
+    // dimensional concat. Assuming the dimensions of any input/output
+    // tensor are {x0, x1,...,xn-1, y0, y1,...,ym-1}, where the concat is along
+    // the dimension indicated with size y0, we flatten it to {x, y}, where y =
+    // Prod_i(yi) and x = ((n > 0) ? Prod_i(xi) : 1).
+    ConstMatrixVector inputs_flat;
+    inputs_flat.reserve(N);
+    int64 inputs_flat_dim0 = 1;
+    for (int d = 0; d < axis; ++d) {
+      inputs_flat_dim0 *= input_shape.dim_size(d);
+    }
+    int64 output_concat_dim = 0;
+    const bool input_is_scalar = IsLegacyScalar(input_shape);
+    for (int i = 0; i < N; ++i) {
+      const auto in = values[i];
+      const bool in_is_scalar = IsLegacyScalar(in.shape());
+      OP_REQUIRES(
+          c, in.dims() == input_dims || (input_is_scalar && in_is_scalar),
+          errors::InvalidArgument(
+              "ConcatOp : Ranks of all input tensors should match: shape[0] = ",
+              input_shape.DebugString(), " vs. shape[", i,
+              "] = ", in.shape().DebugString()));
+      for (int j = 0; j < input_dims; ++j) {
+        if (j == axis) {
+          continue;
+        }
+        OP_REQUIRES(
+            c, in.dim_size(j) == input_shape.dim_size(j),
+            errors::InvalidArgument(
+                "ConcatOp : Dimensions of inputs should match: shape[0] = ",
+                input_shape.DebugString(), " vs. shape[", i,
+                "] = ", in.shape().DebugString()));
+      }
+      if (in.NumElements() > 0) {
+        int64 inputs_flat_dim1 = in.NumElements() / inputs_flat_dim0;
+        inputs_flat.emplace_back(new typename TTypes<T, 2>::ConstMatrix(
+            in.shaped<T, 2>({inputs_flat_dim0, inputs_flat_dim1})));
+      }
+      // TODO(irving): Remove check once !allow_legacy_scalars().
+      output_concat_dim += in.dims() > 0 ? in.dim_size(axis) : 1;
+    }
+
+    TensorShape output_shape(input_shape);
+    // TODO(irving): Remove rank 0 case once !allow_legacy_scalars().
+    if (output_shape.dims() == 0) {
+      output_shape.AddDim(output_concat_dim);
+    } else {
+      output_shape.set_dim(axis, output_concat_dim);
+    }
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(c, c->allocate_output(0, output_shape, &output));
+    if (output->NumElements() <= 0) {
+      return;
+    }
+
+    ComPtr<IDXGraphicsAnalysis> ga;
+    HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
+    if (SUCCEEDED(hr)) {
+      ga->BeginCapture();
+    }
+
+    AllocatorAttributes attrs;
+    DmlAllocator* allocator =
+        static_cast<DmlAllocator*>(c->device()->GetAllocator(attrs));
+
+    std::vector<const void*> input_data_vector(values.size());
+    for (int i = 0; i < values.size(); i++) {
+      input_data_vector[i] = values[i].tensor_data().data();
+    }
+    const void* output_data = output->tensor_data().data();
+
+    std::vector<ComPtr<ID3D12Resource>> input_resources(values.size());
+    for (int i = 0; i < values.size(); i++) {
+      input_resources[i] = allocator->DecodeDataHandle(input_data_vector[i]);
+    }
+    ComPtr<ID3D12Resource> output_resource =
+        allocator->DecodeDataHandle(output_data);
+
+    DmlInterface* dml_interface = DmlInterface::instance();
+    ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
+    ComPtr<IDMLDeviceContext> dml_device_context;
+    THROW_IF_FAILED(dml_device->CreateDeviceContext(
+        dml_interface->GetD3D12Fence(), &dml_device_context));
+
+    std::vector<ComPtr<IDMLResource>> input_dml_resources(values.size());
+    ComPtr<IDMLResource> output_dml_resource;
+
+    for (int i = 0; i < values.size(); i++) {
+      THROW_IF_FAILED(dml_device_context->CreateResource(
+          input_resources[i].Get(), &input_dml_resources[i]));
+    }
+    THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
+                                                       &output_dml_resource));
+
+
+    std::vector<DML_TENSOR_DESC> dml_input_descs(values.size());
+    for (int i = 0; i < values.size(); i++) {
+      dml_input_descs[i] = DmlUtil::CreateDmlTensorDesc(&values[i]);
+	}
+    DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(output);
+
+	std::vector<DML_TENSOR_DESC*> dml_input_descs_ptrs(values.size());
+    for (int i = 0; i < values.size(); i++) {
+      dml_input_descs_ptrs[i] = &dml_input_descs[i];
+    }
+
+    ComPtr<IDMLOperation> dml_operation;
+    THROW_IF_FAILED(dml_device->CreateJoinOperation(
+        dml_input_descs_ptrs.data(), values.size(), &dml_output_desc, axis,
+        DML_EXECUTION_HINT_FLAGS_NONE, dml_operation.GetAddressOf()));
+
+    THROW_IF_FAILED(
+        dml_device_context->Open(dml_interface->GetFenceValue() + 1));
+
+    std::vector<IDMLResource*> input_resource_vector(values.size());
+    for (int i = 0; i < values.size(); i++) {
+      input_resource_vector[i] = input_dml_resources[i].Get();
+    }
+
+    THROW_IF_FAILED(dml_device_context->AddOperation(
+        dml_operation.Get(), input_resource_vector.data(), values.size(),
+        output_dml_resource.GetAddressOf(), 1));
+
+    ComPtr<ID3D12CommandList> compute_command_list;
+    THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
+
+    ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
+
+    dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
+        1, compute_command_lists);
+
+    dml_interface->AwaitExecution();
+
+    if (SUCCEEDED(hr)) {
+      ga->EndCapture();
+    }
+  }
+};
+
+using DmlConcatOp = DmlConcatBaseOp<float, NAME_IS_CONCAT_DIM>;
+using DmlConcatV2Op = DmlConcatBaseOp<float, NAME_IS_AXIS>;
+
+REGISTER_KERNEL_BUILDER(Name("Concat")
+                            .Device(DEVICE_DML)
+                            .TypeConstraint<float>("T")
+                            .HostMemory("concat_dim"),
+                        DmlConcatOp);
+REGISTER_KERNEL_BUILDER(Name("ConcatV2")
+                            .Device(DEVICE_DML)
+                            .TypeConstraint<float>("T")
+                            .HostMemory("axis"),
+                        DmlConcatV2Op);
 
 class ConcatOffsetOp : public OpKernel {
  public:
