@@ -35,35 +35,6 @@ limitations under the License.
 
 using namespace tensorflow;
 
-bool IsOpSupported(const string& op_name) {
-  return op_name == "Add" || op_name == "Sub" || op_name == "Const" ||
-         op_name == "Relu" || op_name == "Placeholder" ||
-         op_name == "Softmax" || op_name == "Identity" ||
-         op_name == "ExpandDims" || op_name == "MaxPool" ||
-         op_name == "Transpose" || op_name == "Conv2D" || op_name == "Split" ||
-         op_name == "ConcatV2" || op_name == "Max" || op_name == "Pad" ||
-         op_name == "Reshape" || op_name == "Shape" || op_name == "Pack" ||
-         op_name == "Mean" || op_name == "Prod" || op_name == "SplitV" ||
-         op_name == "StridedSlice";
-}
-
-void SetDefaultDevice(const string& device, GraphDef* graph_def) {
-  for (int i = 0; i < graph_def->node_size(); ++i) {
-    auto node = graph_def->mutable_node(i);
-    if (node->device().empty()) {
-      if (node->op() == "Test") {
-        node->set_device(device);
-      } else {
-        if (IsOpSupported(node->op())) {
-          node->set_device(device);
-        } else {
-          node->set_device("/cpu:0");
-        }
-      }
-    }
-  }
-}
-
 int main(int argc, char* argv[]) {
   std::ifstream file(
       "C:\\Users\\t-vilab.REDMOND\\Desktop\\onnx_to_tf\\squeezenet.pb",
