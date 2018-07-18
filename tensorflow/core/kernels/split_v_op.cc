@@ -505,4 +505,14 @@ REGISTER_GPU_int32(int64);
 
 #endif  // GOOGLE_CUDA
 
+REGISTER_KERNEL_BUILDER(Name("SplitV")
+                            .Device(DEVICE_DML)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("Tlen")
+                            .HostMemory("size_splits")
+                            .HostMemory("split_dim")
+                            .HostMemory("value")
+                            .HostMemory("output"),
+                        SplitVOpCPU<int32, int32>);
+
 }  // end namespace tensorflow
