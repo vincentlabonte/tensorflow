@@ -70,15 +70,22 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
                                                      &output_dml_resource));
 
   DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&data);
-  DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(&tmp_out);
-
-  DmlUtil::ConvertNhwcToNchwUsingStrides(dml_input_desc);
-  DmlUtil::ConvertNhwcToNchwUsingStrides(dml_output_desc);
+  DML_TENSOR_DESC dml_output_desc = {DML_TENSOR_DATA_TYPE_FLOAT32,
+                                     DML_TENSOR_FLAGS_NONE,
+                                     dml_input_desc.dimCount};
+  for (int i = 0; i < dml_input_desc.dimCount; i++) {
+    dml_output_desc.sizes[i] = dml_input_desc.sizes[i];
+  }
 
   auto axe_vec = axes.vec<int32>();
-  UINT reduction_axes[5];
+  UINT reduction_axes[DML_TENSOR_DIMENSION_COUNT_NCHW];
   for (int i = 0; i < axe_vec.size(); i++) {
+    if (axe_vec(i) >= DML_TENSOR_DIMENSION_COUNT_NCHW) {
+      // Invalid dimension.
+      throw E_INVALIDARG;
+    }
     reduction_axes[i] = axe_vec(i);
+    dml_output_desc.sizes[reduction_axes[i]] = 1u;
   }
 
   ComPtr<IDMLOperation> dml_operation;
@@ -123,5 +130,12 @@ REGISTER_KERNEL_BUILDER(Name("Max")
                             .TypeConstraint<int32>("Tidx")
                             .HostMemory("reduction_indices"),
                         DmlMaxOp);
+
+REGISTER_KERNEL_BUILDER(Name("Mean")
+                            .Device(DEVICE_DML)
+                            .TypeConstraint<float>("T")
+                            .TypeConstraint<int32>("Tidx")
+                            .HostMemory("reduction_indices"),
+                        DmlMeanOp);
 
 }  // namespace tensorflow

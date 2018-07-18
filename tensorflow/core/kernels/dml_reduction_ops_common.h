@@ -44,6 +44,18 @@ class DmlMaxOp : public DmlReductionOp {
   }
 };
 
+class DmlMeanOp : public DmlReductionOp {
+ public:
+  explicit DmlMeanOp(OpKernelConstruction* ctx) : DmlReductionOp(ctx) {}
+
+ protected:
+  DML_REDUCE_FUNCTION GetDmlReduceFunction() override {
+    return DML_REDUCE_FUNCTION_AVERAGE;
+  }
+};
+
+
+
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_KERNELS_REDUCTION_OPS_COMMON_H_

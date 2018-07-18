@@ -42,7 +42,8 @@ bool IsOpSupported(const string& op_name) {
          op_name == "ExpandDims" || op_name == "MaxPool" ||
          op_name == "Transpose" || op_name == "Conv2D" || op_name == "Split" ||
          op_name == "ConcatV2" || op_name == "Max" || op_name == "Pad" ||
-         op_name == "Reshape" || op_name == "Shape" || op_name == "Pack";
+         op_name == "Reshape" || op_name == "Shape" || op_name == "Pack" ||
+         op_name == "Mean";
 }
 
 void SetDefaultDevice(const string& device, GraphDef* graph_def) {
