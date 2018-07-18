@@ -116,6 +116,15 @@ TF_CALL_int64(REGISTER_GPU_KERNEL);
 #undef REGISTER_CPU_KERNEL
 #undef REGISTER_GPU_KERNEL
 
+REGISTER_KERNEL_BUILDER(Name("Range")
+                            .Device(DEVICE_DML)
+                            .HostMemory("start")
+                            .HostMemory("limit")
+                            .HostMemory("delta")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("Tidx"),
+                        RangeOp<int32>);
+
 template <typename T, typename Tnum>
 class LinSpaceOp : public OpKernel {
  public:

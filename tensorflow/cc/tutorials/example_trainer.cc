@@ -80,7 +80,7 @@ int main(int argc, char* argv[]) {
   if (options.target.empty()) {
     // graph::SetDefaultDevice("/cpu:0", &def);
     // graph::SetDefaultDevice("/device:GPU:0", &def);
-    SetDefaultDevice("/device:DML:0", &def);
+    graph::SetDefaultDevice("/device:DML:0", &def);
   }
   TF_CHECK_OK(session->Create(def));
   // NumElements = 150528
