@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <d3d12sdklayers.h>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -20,7 +21,6 @@ limitations under the License.
 #include <iterator>
 #include <string>
 #include <vector>
-#include <d3d12sdklayers.h>
 
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/framework/graph.pb.h"
@@ -41,7 +41,8 @@ bool IsOpSupported(const string& op_name) {
          op_name == "Softmax" || op_name == "Identity" ||
          op_name == "ExpandDims" || op_name == "MaxPool" ||
          op_name == "Transpose" || op_name == "Conv2D" || op_name == "Split" ||
-         op_name == "ConcatV2" || op_name == "Max" || op_name == "Pad";
+         op_name == "ConcatV2" || op_name == "Max" || op_name == "Pad" ||
+         op_name == "Reshape";
 }
 
 void SetDefaultDevice(const string& device, GraphDef* graph_def) {

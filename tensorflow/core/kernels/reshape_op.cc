@@ -108,4 +108,11 @@ REGISTER_KERNEL_BUILDER(Name("Reshape")
                         ReshapeOp);
 #endif
 
+REGISTER_KERNEL_BUILDER(Name("Reshape")
+                            .Device(DEVICE_DML)
+                            .HostMemory("shape")
+                            .TypeConstraint<float>("T")
+                            .TypeConstraint<int32>("Tshape"),
+                        ReshapeOp);
+
 }  // namespace tensorflow
