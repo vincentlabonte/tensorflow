@@ -107,6 +107,13 @@ REGISTER_KERNEL_BUILDER(Name("Shape")
 
 #endif  // GOOGLE_CUDA
 
+REGISTER_KERNEL_BUILDER(Name("Shape")
+                            .Device(DEVICE_DML)
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("out_type")
+                            .TypeConstraint<float>("T"),
+                        ShapeOp<int32>); 
+
 // ShapeN ---------------------------------------
 REGISTER_KERNEL_BUILDER(Name("ShapeN")
                             .Device(DEVICE_CPU)
