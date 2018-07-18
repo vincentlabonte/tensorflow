@@ -31,9 +31,7 @@ limitations under the License.
 
 #include <wrl/client.h>
 
-#include <DXProgrammableCapture.h>
 #include <dml.h>
-#include <dxgi1_5.h>
 
 #include "tensorflow/core/common_runtime/dml/dml_allocator.h"
 #include "tensorflow/core/common_runtime/dml/dml_interface.h"
@@ -369,12 +367,6 @@ Status DmlTransposeOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
     dml_output_desc.strides[dim_dml] = 0;
   }
 
-  ComPtr<IDXGraphicsAnalysis> ga;
-  HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (SUCCEEDED(hr)) {
-    ga->BeginCapture();
-  }
-
   AllocatorAttributes attrs;
   DmlAllocator* allocator =
       static_cast<DmlAllocator*>(ctx->device()->GetAllocator(attrs));
@@ -425,10 +417,6 @@ Status DmlTransposeOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
       1, compute_command_lists);
 
   dml_interface->AwaitExecution();
-
-  if (SUCCEEDED(hr)) {
-    ga->EndCapture();
-  }
 }
 
 REGISTER_KERNEL_BUILDER(Name("Transpose")

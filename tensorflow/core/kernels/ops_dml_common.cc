@@ -18,12 +18,6 @@ limitations under the License.
 namespace tensorflow {
 
 void DmlBinaryOp::Compute(OpKernelContext* ctx) {
-  ComPtr<IDXGraphicsAnalysis> ga;
-  HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (SUCCEEDED(hr)) {
-    ga->BeginCapture();
-  }
-
   BinaryOpState state(ctx);
   if (!ctx->status().ok()) return;
   Tensor* out = state.out;
@@ -100,19 +94,9 @@ void DmlBinaryOp::Compute(OpKernelContext* ctx) {
       1, compute_command_lists);
 
   dml_interface->AwaitExecution();
-
-  if (SUCCEEDED(hr)) {
-    ga->EndCapture();
-  }
 }
 
 void DmlActivationOp::Compute(OpKernelContext* ctx) {
-  ComPtr<IDXGraphicsAnalysis> ga;
-  HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (SUCCEEDED(hr)) {
-    ga->BeginCapture();
-  }
-
   const Tensor& input = ctx->input(0);
   Tensor* output = nullptr;
   OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
@@ -172,10 +156,6 @@ void DmlActivationOp::Compute(OpKernelContext* ctx) {
       1, compute_command_lists);
 
   dml_interface->AwaitExecution();
-
-  if (SUCCEEDED(hr)) {
-    ga->EndCapture();
-  }
 }
 
 class DmlReluOp : public DmlActivationOp {

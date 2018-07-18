@@ -18,9 +18,7 @@ limitations under the License.
 
 #include <wrl/client.h>
 
-#include <DXProgrammableCapture.h>
 #include <dml.h>
-#include <dxgi1_5.h>
 
 #include "tensorflow/core/common_runtime/dml/dml_allocator.h"
 #include "tensorflow/core/common_runtime/dml/dml_interface.h"

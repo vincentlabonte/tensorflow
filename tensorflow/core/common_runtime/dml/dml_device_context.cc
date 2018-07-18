@@ -19,21 +19,12 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/dml/dml_interface.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
 
-#include <dxgi1_5.h>
-#include <DXProgrammableCapture.h>
-
 namespace tensorflow {
 
 void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
                                              Device* device,
                                              Tensor* device_tensor,
                                              StatusCallback done) const {
-  ComPtr<IDXGraphicsAnalysis> ga;
-  HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (SUCCEEDED(hr)) {
-    ga->BeginCapture();
-  }
-
   const int64 total_bytes = device_tensor->TotalBytes();
   // Tensors must be the same size
   assert(total_bytes == cpu_tensor->TotalBytes());
@@ -78,9 +69,6 @@ void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
 
     dml_interface->AwaitExecution();
   }
-  if (SUCCEEDED(hr)) {
-    ga->EndCapture();
-  }
   done(Status::OK());
 }
 
@@ -88,12 +76,6 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
                                              StringPiece edge_name,
                                              Device* device, Tensor* cpu_tensor,
                                              StatusCallback done) {
-  ComPtr<IDXGraphicsAnalysis> ga;
-  HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (SUCCEEDED(hr)) {
-    ga->BeginCapture();
-  }
-
   const int64 total_bytes = device_tensor->TotalBytes();
   // Tensors must be the same size
   assert(total_bytes == cpu_tensor->TotalBytes());
@@ -139,9 +121,6 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
 
     DmlInterface::MapCopyFromResource(readbackBuffer.Get(), dst_data,
                                       total_bytes);
-  }
-  if (SUCCEEDED(hr)) {
-    ga->EndCapture();
   }
   done(Status::OK());
 }

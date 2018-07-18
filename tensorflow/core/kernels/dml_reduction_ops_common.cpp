@@ -1,4 +1,3 @@
-
 #include "tensorflow/core/kernels/dml_reduction_ops_common.h"
 
 namespace tensorflow {
@@ -36,12 +35,6 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
   OP_REQUIRES_OK(
       ctx, ctx->allocate_temp(ctx->expected_output_dtype(0),
                               helper.out_reshape(), &tmp_out, alloc_attr));
-
-  ComPtr<IDXGraphicsAnalysis> ga;
-  HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-  if (SUCCEEDED(hr)) {
-    ga->BeginCapture();
-  }
 
   AllocatorAttributes attrs;
   DmlAllocator* allocator =
@@ -108,10 +101,6 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
       1, compute_command_lists);
 
   dml_interface->AwaitExecution();
-
-  if (SUCCEEDED(hr)) {
-    ga->EndCapture();
-  }
 
   // Set the real output using the contents of the reduction but the
   // real expected output shape.  The number of elements should

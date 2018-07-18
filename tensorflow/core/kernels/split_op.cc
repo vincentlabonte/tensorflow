@@ -35,9 +35,7 @@ limitations under the License.
 
 #include <wrl/client.h>
 
-#include <DXProgrammableCapture.h>
 #include <dml.h>
-#include <dxgi1_5.h>
 #include <vector>
 
 #include "tensorflow/core/common_runtime/dml/dml_allocator.h"
@@ -566,12 +564,6 @@ class DmlSplitOp : public OpKernel {
                      context->allocate_output(i, output_shape, &outputs[i]));
     }
 
-    ComPtr<IDXGraphicsAnalysis> ga;
-    HRESULT hr = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
-    if (SUCCEEDED(hr)) {
-      ga->BeginCapture();
-    }
-
     AllocatorAttributes attrs;
     DmlAllocator* allocator =
         static_cast<DmlAllocator*>(context->device()->GetAllocator(attrs));
@@ -644,10 +636,6 @@ class DmlSplitOp : public OpKernel {
         1, compute_command_lists);
 
     dml_interface->AwaitExecution();
-
-    if (SUCCEEDED(hr)) {
-      ga->EndCapture();
-    }
   }
 };
 
