@@ -80,4 +80,14 @@ REGISTER_SYCL_KERNELS(double);
 #undef REGISTER_SYCL_KERNELS
 #endif  // TENSORFLOW_USE_SYCL
 
+REGISTER_KERNEL_BUILDER(
+    Name("Prod")
+        .Device(DEVICE_DML)
+        .TypeConstraint<int32>("T")
+        .TypeConstraint<int32>("Tidx")
+        .HostMemory("input")
+        .HostMemory("reduction_indices")
+        .HostMemory("output"),
+    ReductionOp<CPUDevice, int32, int32, Eigen::internal::ProdReducer<int32>>);
+
 }  // namespace tensorflow
