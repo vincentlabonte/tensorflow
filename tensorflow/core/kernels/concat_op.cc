@@ -413,9 +413,8 @@ class DmlConcatBaseOp : public OpKernel {
 
     DmlInterface* dml_interface = DmlInterface::instance();
     ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
-    ComPtr<IDMLDeviceContext> dml_device_context;
-    THROW_IF_FAILED(dml_device->CreateDeviceContext(
-        dml_interface->GetD3D12Fence(), &dml_device_context));
+    ComPtr<IDMLDeviceContext> dml_device_context =
+        dml_interface->GetDmlDeviceContext();
 
     std::vector<ComPtr<IDMLResource>> input_dml_resources(values.size());
     ComPtr<IDMLResource> output_dml_resource;
@@ -444,27 +443,14 @@ class DmlConcatBaseOp : public OpKernel {
         dml_input_descs_ptrs.data(), values.size(), &dml_output_desc, axis,
         DML_EXECUTION_HINT_FLAGS_NONE, dml_operation.GetAddressOf()));
 
-    THROW_IF_FAILED(
-        dml_device_context->Open(dml_interface->GetFenceValue() + 1));
-
     std::vector<IDMLResource*> input_resource_vector(values.size());
     for (int i = 0; i < values.size(); i++) {
       input_resource_vector[i] = input_dml_resources[i].Get();
     }
 
-    THROW_IF_FAILED(dml_device_context->AddOperation(
+    THROW_IF_FAILED(dml_interface->AddOperation(
         dml_operation.Get(), input_resource_vector.data(), values.size(),
         output_dml_resource.GetAddressOf(), 1));
-
-    ComPtr<ID3D12CommandList> compute_command_list;
-    THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
-
-    ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
-
-    dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
-        1, compute_command_lists);
-
-    dml_interface->AwaitExecution();
   }
 };
 

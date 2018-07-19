@@ -40,6 +40,7 @@ void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
 
 	DmlInterface* dml_interface = DmlInterface::instance();
     ComPtr<ID3D12Device> d3d12_device = dml_interface->GetD3D12Device();
+    dml_interface->AwaitExecution();
 
     UINT64 width = dst_resource->GetDesc().Width;
     ComPtr<ID3D12Resource> uploadBuffer;
@@ -76,6 +77,8 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
                                              StringPiece edge_name,
                                              Device* device, Tensor* cpu_tensor,
                                              StatusCallback done) {
+
+
   const int64 total_bytes = device_tensor->TotalBytes();
   // Tensors must be the same size
   assert(total_bytes == cpu_tensor->TotalBytes());
@@ -91,6 +94,7 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
 
     DmlInterface* dml_interface = DmlInterface::instance();
     ComPtr<ID3D12Device> d3d12_device = dml_interface->GetD3D12Device();
+    dml_interface->AwaitExecution();
 
 	UINT64 width = src_resource->GetDesc().Width;
     ComPtr<ID3D12Resource> readbackBuffer;

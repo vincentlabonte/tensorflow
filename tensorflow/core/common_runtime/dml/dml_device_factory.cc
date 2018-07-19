@@ -39,7 +39,7 @@ class DmlDeviceFactory : public DeviceFactory {
       devices->push_back(new DmlDevice(
           options, name, Bytes(256 << 20), DeviceLocality(), "",
           dmlInterface->GetDmlAllocator(), dmlInterface->GetCPUAllocator(),
-          dmlInterface->GetDmlDeviceContext()));
+          dmlInterface->GetDeviceContext()));
     }
 
     return Status::OK();

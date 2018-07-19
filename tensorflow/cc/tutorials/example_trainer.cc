@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <wrl/client.h>
 
 #include <d3d12sdklayers.h>
 #include <cstdio>
@@ -32,6 +33,14 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/public/session.h"
+
+#include <DXGItype.h>  
+#include <dxgi1_2.h>  
+#include <dxgi1_3.h>  
+#include <DXProgrammableCapture.h>
+
+#include <chrono>
+typedef std::chrono::high_resolution_clock Clock;
 
 using namespace tensorflow;
 
@@ -65,11 +74,30 @@ int main(int argc, char* argv[]) {
   img.close();
   std::copy_n(vec.begin(), vec.size(), tensor.flat<float>().data());
 
+  IDXGraphicsAnalysis* ga;
+  HRESULT hr =
+      DXGIGetDebugInterface1(0, __uuidof(ga), reinterpret_cast<void**>(&ga));
+  if (SUCCEEDED(hr)) {
+    ga->BeginCapture();
+  }
+
+  auto t1 = Clock::now();
+
   std::vector<Tensor> outputs;
   TF_CHECK_OK(
       session->Run({{"data_0:0", tensor}}, {"Reshape_1:0"}, {}, &outputs));
   CHECK_EQ(size_t{1}, outputs.size());
   const Tensor& tensor_result = outputs[0];
+
+  auto t2 = Clock::now();
+  std::cout
+      << "Delta t2-t1: "
+      << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
+      << " nanoseconds" << std::endl;
+
+  if (SUCCEEDED(hr)) {
+    ga->EndCapture();
+  }
 
   int max_index = 0;
   float max_value = tensor_result.flat<float>()(0);

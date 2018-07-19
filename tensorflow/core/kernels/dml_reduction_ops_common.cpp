@@ -50,9 +50,8 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
 
   DmlInterface* dml_interface = DmlInterface::instance();
   ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
-  ComPtr<IDMLDeviceContext> dml_device_context;
-  THROW_IF_FAILED(dml_device->CreateDeviceContext(
-      dml_interface->GetD3D12Fence(), &dml_device_context));
+  ComPtr<IDMLDeviceContext> dml_device_context =
+      dml_interface->GetDmlDeviceContext();
 
   ComPtr<IDMLResource> input_dml_resource;
   ComPtr<IDMLResource> output_dml_resource;
@@ -86,21 +85,9 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
       GetDmlReduceFunction(), &dml_input_desc, &dml_output_desc, reduction_axes,
       axe_vec.size(), DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
-  THROW_IF_FAILED(dml_device_context->Open(dml_interface->GetFenceValue() + 1));
-
-  THROW_IF_FAILED(dml_device_context->AddOperation(
+  THROW_IF_FAILED(dml_interface->AddOperation(
       dml_operation.Get(), input_dml_resource.GetAddressOf(), 1,
       output_dml_resource.GetAddressOf(), 1));
-
-  ComPtr<ID3D12CommandList> compute_command_list;
-  THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
-
-  ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
-
-  dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
-      1, compute_command_lists);
-
-  dml_interface->AwaitExecution();
 
   // Set the real output using the contents of the reduction but the
   // real expected output shape.  The number of elements should

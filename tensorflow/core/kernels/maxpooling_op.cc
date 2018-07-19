@@ -1542,9 +1542,8 @@ class DmlMaxPoolingOp : public OpKernel {
 
     DmlInterface* dml_interface = DmlInterface::instance();
     ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
-    ComPtr<IDMLDeviceContext> dml_device_context;
-    THROW_IF_FAILED(dml_device->CreateDeviceContext(
-        dml_interface->GetD3D12Fence(), &dml_device_context));
+    ComPtr<IDMLDeviceContext> dml_device_context =
+        dml_interface->GetDmlDeviceContext();
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> output_dml_resource;
@@ -1574,23 +1573,10 @@ class DmlMaxPoolingOp : public OpKernel {
         window_size, start_padding, end_padding, 4,
         DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
-    THROW_IF_FAILED(
-        dml_device_context->Open(dml_interface->GetFenceValue() + 1));
-
     IDMLResource* input_resources[1] = {input_dml_resource.Get()};
-    THROW_IF_FAILED(dml_device_context->AddOperation(
+    THROW_IF_FAILED(dml_interface->AddOperation(
         dml_operation.Get(), input_resources, 1,
         output_dml_resource.GetAddressOf(), 1));
-
-    ComPtr<ID3D12CommandList> compute_command_list;
-    THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
-
-    ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
-
-    dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
-        1, compute_command_lists);
-
-    dml_interface->AwaitExecution();
   }
 
  private:

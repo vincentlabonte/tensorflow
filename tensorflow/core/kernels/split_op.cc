@@ -583,9 +583,8 @@ class DmlSplitOp : public OpKernel {
 
     DmlInterface* dml_interface = DmlInterface::instance();
     ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
-    ComPtr<IDMLDeviceContext> dml_device_context;
-    THROW_IF_FAILED(dml_device->CreateDeviceContext(
-        dml_interface->GetD3D12Fence(), &dml_device_context));
+    ComPtr<IDMLDeviceContext> dml_device_context =
+        dml_interface->GetDmlDeviceContext();
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> filter_dml_resource;
@@ -615,27 +614,14 @@ class DmlSplitOp : public OpKernel {
         split_dim, DML_EXECUTION_HINT_FLAGS_NONE,
         &dml_operation));
 
-    THROW_IF_FAILED(
-        dml_device_context->Open(dml_interface->GetFenceValue() + 1));
-
     IDMLResource* input_resources[2] = {input_dml_resource.Get(),
                                         filter_dml_resource.Get()};
     std::vector<IDMLResource*> output_resource_vector(num_split);
     for (int i = 0; i < num_split; i++) {
       output_resource_vector[i] = output_dml_resources[i].Get();
     }
-    THROW_IF_FAILED(dml_device_context->AddOperation(
+    THROW_IF_FAILED(dml_interface->AddOperation(
         dml_operation.Get(), input_resources, 2, output_resource_vector.data(), 1));
-
-    ComPtr<ID3D12CommandList> compute_command_list;
-    THROW_IF_FAILED(dml_device_context->Close(&compute_command_list));
-
-    ID3D12CommandList* compute_command_lists[1] = {compute_command_list.Get()};
-
-    dml_interface->GetD3D12CommandQueue()->ExecuteCommandLists(
-        1, compute_command_lists);
-
-    dml_interface->AwaitExecution();
   }
 };
 
