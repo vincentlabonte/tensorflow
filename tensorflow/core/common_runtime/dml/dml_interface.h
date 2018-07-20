@@ -38,6 +38,8 @@ class DmlInterface {
   ComPtr<ID3D12CommandQueue> compute_command_queue_;
   ComPtr<ID3D12CommandQueue> copy_command_queue_;
 
+  ComPtr<ID3D12CommandAllocator> copy_command_allocator_;
+
   ComPtr<ID3D12Fence> compute_fence_;
   ComPtr<ID3D12Fence> copy_fence_;
 
@@ -67,6 +69,10 @@ class DmlInterface {
         D3D12_COMMAND_LIST_TYPE_COPY, 0, D3D12_COMMAND_QUEUE_FLAG_NONE, 0};
     THROW_IF_FAILED(d3d12_device_->CreateCommandQueue(
         &copy_command_queue_desc, IID_PPV_ARGS(&copy_command_queue_)));
+
+	THROW_IF_FAILED(d3d12_device_->CreateCommandAllocator(
+        D3D12_COMMAND_LIST_TYPE_COPY,
+        IID_PPV_ARGS(&copy_command_allocator_)));
 
     cpu_allocator_ = cpu_allocator();
     dml_allocator_ = new DmlAllocator(
@@ -98,25 +104,23 @@ class DmlInterface {
     return &instance;
   }
 
-  static void MapAndCopyToResource(ID3D12Resource* pResource, const void* pSrc,
-                                   UINT64 numBytes) {
-    D3D12_RANGE range = {0, static_cast<SIZE_T>(numBytes)};
-    void* pData;
-    THROW_IF_FAILED(
-        pResource->Map(0, &range, reinterpret_cast<void**>(&pData)));
-    memcpy(pData, pSrc, static_cast<SIZE_T>(numBytes));
-    pResource->Unmap(0, &range);
+  static void MapAndCopyToResource(ID3D12Resource* resource, const void* src,
+                                   UINT64 num_bytes) {
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(num_bytes)};
+    void* data;
+    THROW_IF_FAILED(resource->Map(0, &range, reinterpret_cast<void**>(&data)));
+    memcpy(data, src, static_cast<SIZE_T>(num_bytes));
+    resource->Unmap(0, &range);
   }
 
-  static void MapCopyFromResource(ID3D12Resource* pResource, void* pDest,
-                                  UINT64 numBytes) {
-    D3D12_RANGE range = {0, static_cast<SIZE_T>(numBytes)};
-    void* pData;
-    THROW_IF_FAILED(
-        pResource->Map(0, &range, reinterpret_cast<void**>(&pData)));
-    memcpy(pDest, pData, static_cast<SIZE_T>(numBytes));
+  static void MapCopyFromResource(ID3D12Resource* resource, void* dest,
+                                  UINT64 num_bytes) {
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(num_bytes)};
+    void* data;
+    THROW_IF_FAILED(resource->Map(0, &range, reinterpret_cast<void**>(&data)));
+    memcpy(dest, data, static_cast<SIZE_T>(num_bytes));
     range.End = 0;
-    pResource->Unmap(0, &range);
+    resource->Unmap(0, &range);
   }
 
   DmlAllocator* GetDmlAllocator() const { return dml_allocator_; }
@@ -139,6 +143,10 @@ class DmlInterface {
 
   ID3D12CommandQueue* GetCopyCommandQueue() const {
     return copy_command_queue_.Get();
+  }
+
+  ID3D12CommandAllocator* GetCopyCommandAllocator() const {
+    return copy_command_allocator_.Get();
   }
 
   ID3D12Fence* GetComputeFence() const { return compute_fence_.Get(); }

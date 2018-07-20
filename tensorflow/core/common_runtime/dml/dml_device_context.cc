@@ -42,29 +42,29 @@ void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
     ComPtr<ID3D12Device> d3d12_device = dml_interface->GetD3D12Device();
 
     UINT64 width = dst_resource->GetDesc().Width;
-    ComPtr<ID3D12Resource> uploadBuffer;
+    ComPtr<ID3D12Resource> upload_buffer;
     THROW_IF_FAILED(d3d12_device->CreateCommittedResource(
         &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD), D3D12_HEAP_FLAG_NONE,
         &CD3DX12_RESOURCE_DESC::Buffer(width),
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-        IID_PPV_ARGS(&uploadBuffer)));
+        IID_PPV_ARGS(&upload_buffer)));
 
-    DmlInterface::MapAndCopyToResource(uploadBuffer.Get(), src_data,
+    DmlInterface::MapAndCopyToResource(upload_buffer.Get(), src_data,
                                        total_bytes);
 
-    ComPtr<ID3D12CommandAllocator> pCommandAllocatorCopyToGPU;
-    THROW_IF_FAILED(d3d12_device->CreateCommandAllocator(
-        D3D12_COMMAND_LIST_TYPE_COPY,
-        IID_PPV_ARGS(&pCommandAllocatorCopyToGPU)));
-    ComPtr<ID3D12GraphicsCommandList> pCommandListCopyToGPU;
+    ComPtr<ID3D12CommandAllocator> copy_command_allocator =
+        dml_interface->GetCopyCommandAllocator();
+
+    ComPtr<ID3D12GraphicsCommandList> command_list_copy_to_gpu;
     THROW_IF_FAILED(d3d12_device->CreateCommandList(
-        0, D3D12_COMMAND_LIST_TYPE_COPY, pCommandAllocatorCopyToGPU.Get(),
-        nullptr, IID_PPV_ARGS(&pCommandListCopyToGPU)));
+        0, D3D12_COMMAND_LIST_TYPE_COPY, copy_command_allocator.Get(), nullptr,
+        IID_PPV_ARGS(&command_list_copy_to_gpu)));
 
-    pCommandListCopyToGPU->CopyResource(dst_resource.Get(), uploadBuffer.Get());
-    pCommandListCopyToGPU->Close();
+    command_list_copy_to_gpu->CopyResource(dst_resource.Get(),
+                                           upload_buffer.Get());
+    command_list_copy_to_gpu->Close();
 
-    ID3D12CommandList* pCopyToGPUCLs[1] = {pCommandListCopyToGPU.Get()};
+    ID3D12CommandList* pCopyToGPUCLs[1] = {command_list_copy_to_gpu.Get()};
     dml_interface->GetCopyCommandQueue()->ExecuteCommandLists(1, pCopyToGPUCLs);
 
     dml_interface->AwaitCopyExecution();
@@ -94,33 +94,32 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
     dml_interface->AwaitComputeExecution();
 
     UINT64 width = src_resource->GetDesc().Width;
-    ComPtr<ID3D12Resource> readbackBuffer;
+    ComPtr<ID3D12Resource> readback_buffer;
     THROW_IF_FAILED(d3d12_device->CreateCommittedResource(
         &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK),
         D3D12_HEAP_FLAG_NONE, &CD3DX12_RESOURCE_DESC::Buffer(width),
         D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-        IID_PPV_ARGS(&readbackBuffer)));
+        IID_PPV_ARGS(&readback_buffer)));
 
-    ComPtr<ID3D12CommandAllocator> pCommandAllocatorCopyFromGPU;
-    THROW_IF_FAILED(d3d12_device->CreateCommandAllocator(
-        D3D12_COMMAND_LIST_TYPE_COPY,
-        IID_PPV_ARGS(&pCommandAllocatorCopyFromGPU)));
-    ComPtr<ID3D12GraphicsCommandList> pCommandListCopyFromGPU;
+    ComPtr<ID3D12CommandAllocator> copy_command_allocator =
+        dml_interface->GetCopyCommandAllocator();
+
+    ComPtr<ID3D12GraphicsCommandList> command_list_copy_from_gpu;
     THROW_IF_FAILED(d3d12_device->CreateCommandList(
-        0, D3D12_COMMAND_LIST_TYPE_COPY, pCommandAllocatorCopyFromGPU.Get(),
-        nullptr, IID_PPV_ARGS(&pCommandListCopyFromGPU)));
+        0, D3D12_COMMAND_LIST_TYPE_COPY, copy_command_allocator.Get(), nullptr,
+        IID_PPV_ARGS(&command_list_copy_from_gpu)));
 
-    pCommandListCopyFromGPU->CopyResource(readbackBuffer.Get(),
-                                          src_resource.Get());
-    pCommandListCopyFromGPU->Close();
+    command_list_copy_from_gpu->CopyResource(readback_buffer.Get(),
+                                             src_resource.Get());
+    command_list_copy_from_gpu->Close();
 
-    ID3D12CommandList* pCopyFromGPUCLs[1] = {pCommandListCopyFromGPU.Get()};
+    ID3D12CommandList* pCopyFromGPUCLs[1] = {command_list_copy_from_gpu.Get()};
     dml_interface->GetCopyCommandQueue()->ExecuteCommandLists(1,
                                                               pCopyFromGPUCLs);
 
     dml_interface->AwaitCopyExecution();
 
-    DmlInterface::MapCopyFromResource(readbackBuffer.Get(), dst_data,
+    DmlInterface::MapCopyFromResource(readback_buffer.Get(), dst_data,
                                       total_bytes);
   }
   done(Status::OK());
