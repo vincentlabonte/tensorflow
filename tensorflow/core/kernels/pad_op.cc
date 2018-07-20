@@ -547,7 +547,7 @@ class DmlPadOp : public OpKernel {
         start_padding, end_padding, fixed_dims, DML_EXECUTION_HINT_FLAGS_NONE,
         &dml_operation));
 
-    THROW_IF_FAILED(dml_interface->AddOperation(
+    THROW_IF_FAILED(dml_interface->AddComputeOperation(
         dml_operation.Get(), input_dml_resource.GetAddressOf(), 1,
         output_dml_resource.GetAddressOf(), 1));
   }

@@ -401,8 +401,8 @@ Status DmlTransposeOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
       nullptr, DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
   IDMLResource* input_resources[1] = {input_dml_resource.Get()};
-  THROW_IF_FAILED(
-      dml_interface->AddOperation(dml_operation.Get(), input_resources, 1,
+  THROW_IF_FAILED(dml_interface->AddComputeOperation(
+      dml_operation.Get(), input_resources, 1,
                                        output_dml_resource.GetAddressOf(), 1));
 }
 

@@ -95,7 +95,8 @@ Status DmlDevice::FillContextMap(const Graph* graph,
 }
 
 Status DmlDevice::Sync() {
-  DmlInterface::instance()->AwaitExecution();
+  DmlInterface::instance()->AwaitComputeExecution();
+  DmlInterface::instance()->AwaitCopyExecution();
   return Status::OK();
 }
 

@@ -85,7 +85,7 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
       GetDmlReduceFunction(), &dml_input_desc, &dml_output_desc, reduction_axes,
       axe_vec.size(), DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
-  THROW_IF_FAILED(dml_interface->AddOperation(
+  THROW_IF_FAILED(dml_interface->AddComputeOperation(
       dml_operation.Get(), input_dml_resource.GetAddressOf(), 1,
       output_dml_resource.GetAddressOf(), 1));
 

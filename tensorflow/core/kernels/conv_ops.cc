@@ -1058,7 +1058,7 @@ class DmlConv2DOp : public BinaryOp<float> {
         1, DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
     IDMLResource* input_resources[2] = {input_dml_resource.Get(), filter_dml_resource.Get()};
-    THROW_IF_FAILED(dml_interface->AddOperation(
+    THROW_IF_FAILED(dml_interface->AddComputeOperation(
         dml_operation.Get(), input_resources, 2,
         output_dml_resource.GetAddressOf(), 1));
   }

@@ -620,7 +620,7 @@ class DmlSplitOp : public OpKernel {
     for (int i = 0; i < num_split; i++) {
       output_resource_vector[i] = output_dml_resources[i].Get();
     }
-    THROW_IF_FAILED(dml_interface->AddOperation(
+    THROW_IF_FAILED(dml_interface->AddComputeOperation(
         dml_operation.Get(), input_resources, 2, output_resource_vector.data(), 1));
   }
 };

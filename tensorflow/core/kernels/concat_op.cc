@@ -448,7 +448,7 @@ class DmlConcatBaseOp : public OpKernel {
       input_resource_vector[i] = input_dml_resources[i].Get();
     }
 
-    THROW_IF_FAILED(dml_interface->AddOperation(
+    THROW_IF_FAILED(dml_interface->AddComputeOperation(
         dml_operation.Get(), input_resource_vector.data(), values.size(),
         output_dml_resource.GetAddressOf(), 1));
   }

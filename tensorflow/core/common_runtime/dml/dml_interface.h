@@ -34,10 +34,19 @@ class DmlInterface {
 
   ComPtr<ID3D12Device> d3d12_device_;
   ComPtr<IDMLDevice> dml_device_;
-  ComPtr<ID3D12CommandQueue> d3d12_command_queue_;
-  ComPtr<ID3D12Fence> d3d12_fence_;
-  mutex fence_value_mu_;
-  uint64_t fence_value_ = 0 GUARDED_BY(fence_value_mu_);
+
+  ComPtr<ID3D12CommandQueue> compute_command_queue_;
+  ComPtr<ID3D12CommandQueue> copy_command_queue_;
+
+  ComPtr<ID3D12Fence> compute_fence_;
+  ComPtr<ID3D12Fence> copy_fence_;
+
+  mutex compute_fence_value_mu_;
+  uint64_t compute_fence_value_ = 0 GUARDED_BY(compute_fence_value_mu_);
+
+  mutex copy_fence_value_mu_;
+  uint64_t copy_fence_value_ = 0 GUARDED_BY(copy_fence_value_mu_);
+
   mutex dml_device_context_mu_;
   ComPtr<IDMLDeviceContext> dml_device_context_
       GUARDED_BY(dml_device_context_mu_);
@@ -49,10 +58,15 @@ class DmlInterface {
     THROW_IF_FAILED(
         DMLCreateDevice(d3d12_device_.Get(), IID_PPV_ARGS(&dml_device_)));
 
-    D3D12_COMMAND_QUEUE_DESC command_queue_desc = {
+    D3D12_COMMAND_QUEUE_DESC compute_command_queue_desc = {
         D3D12_COMMAND_LIST_TYPE_COMPUTE, 0, D3D12_COMMAND_QUEUE_FLAG_NONE, 0};
     THROW_IF_FAILED(d3d12_device_->CreateCommandQueue(
-        &command_queue_desc, IID_PPV_ARGS(&d3d12_command_queue_)));
+        &compute_command_queue_desc, IID_PPV_ARGS(&compute_command_queue_)));
+
+    D3D12_COMMAND_QUEUE_DESC copy_command_queue_desc = {
+        D3D12_COMMAND_LIST_TYPE_COPY, 0, D3D12_COMMAND_QUEUE_FLAG_NONE, 0};
+    THROW_IF_FAILED(d3d12_device_->CreateCommandQueue(
+        &copy_command_queue_desc, IID_PPV_ARGS(&copy_command_queue_)));
 
     cpu_allocator_ = cpu_allocator();
     dml_allocator_ = new DmlAllocator(
@@ -62,9 +76,13 @@ class DmlInterface {
     device_context_ = new DmlDeviceContext();
 
     THROW_IF_FAILED(d3d12_device_.Get()->CreateFence(
-        fence_value_, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&d3d12_fence_)));
+        compute_fence_value_, D3D12_FENCE_FLAG_SHARED,
+        IID_PPV_ARGS(&compute_fence_)));
+    THROW_IF_FAILED(d3d12_device_.Get()->CreateFence(
+        copy_fence_value_, D3D12_FENCE_FLAG_SHARED,
+        IID_PPV_ARGS(&copy_fence_)));
 
-    THROW_IF_FAILED(dml_device_->CreateDeviceContext(d3d12_fence_.Get(),
+    THROW_IF_FAILED(dml_device_->CreateDeviceContext(compute_fence_.Get(),
                                                      &dml_device_context_));
   }
 
@@ -115,23 +133,28 @@ class DmlInterface {
 
   ID3D12Device* GetD3D12Device() const { return d3d12_device_.Get(); }
 
-  ID3D12CommandQueue* GetD3D12CommandQueue() const {
-    return d3d12_command_queue_.Get();
+  ID3D12CommandQueue* GetComputeCommandQueue() const {
+    return compute_command_queue_.Get();
   }
 
-  ID3D12Fence* GetD3D12Fence() const { return d3d12_fence_.Get(); }
-
-  uint64_t GetFenceValue() {
-    mutex_lock l(fence_value_mu_);
-    return fence_value_;
+  ID3D12CommandQueue* GetCopyCommandQueue() const {
+    return copy_command_queue_.Get();
   }
 
-  HRESULT AddOperation(IDMLOperation* operation,
-                    IDMLResource* const* input_resources, UINT input_count,
-                    IDMLResource* const* output_resources, UINT output_count) {
+  ID3D12Fence* GetComputeFence() const { return compute_fence_.Get(); }
+
+  ID3D12Fence* GetCopyFence() const { return copy_fence_.Get(); }
+
+  HRESULT AddComputeOperation(IDMLOperation* operation,
+                              IDMLResource* const* input_resources,
+                              UINT input_count,
+                              IDMLResource* const* output_resources,
+                              UINT output_count) {
     dml_device_context_mu_.lock();
     if (!is_dml_device_context_open_) {
-      dml_device_context_->Open(GetFenceValue() + 1);
+      compute_fence_value_mu_.lock();
+      dml_device_context_->Open(compute_fence_value_ + 1);
+      compute_fence_value_mu_.unlock();
       is_dml_device_context_open_ = true;
     }
     HRESULT ret = dml_device_context_->AddOperation(
@@ -141,26 +164,42 @@ class DmlInterface {
     return ret;
   }
 
-  void AwaitExecution() {
+  void AwaitComputeExecution() {
     dml_device_context_mu_.lock();
     if (is_dml_device_context_open_) {
       ComPtr<ID3D12CommandList> compute_command_list;
       THROW_IF_FAILED(dml_device_context_->Close(&compute_command_list));
       ID3D12CommandList* compute_command_lists[1] = {
           compute_command_list.Get()};
-      GetD3D12CommandQueue()->ExecuteCommandLists(1, compute_command_lists);
+      compute_command_queue_->ExecuteCommandLists(1, compute_command_lists);
       is_dml_device_context_open_ = false;
     }
     dml_device_context_mu_.unlock();
 
     HANDLE fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    fence_value_mu_.lock();
-    ++fence_value_;
+    compute_fence_value_mu_.lock();
+    ++compute_fence_value_;
+    THROW_IF_FAILED(compute_command_queue_->Signal(compute_fence_.Get(),
+                                                   compute_fence_value_));
+    THROW_IF_FAILED(compute_fence_->SetEventOnCompletion(compute_fence_value_,
+                                                         fence_event));
+    compute_fence_value_mu_.unlock();
+
+    DWORD retVal = WaitForSingleObject(fence_event, INFINITE);
+    if (retVal != WAIT_OBJECT_0) {
+      DebugBreak();
+    }
+  }
+
+  void AwaitCopyExecution() {
+    HANDLE fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    copy_fence_value_mu_.lock();
+    ++copy_fence_value_;
     THROW_IF_FAILED(
-        d3d12_command_queue_->Signal(d3d12_fence_.Get(), fence_value_));
+        copy_command_queue_->Signal(copy_fence_.Get(), copy_fence_value_));
     THROW_IF_FAILED(
-        d3d12_fence_->SetEventOnCompletion(fence_value_, fence_event));
-    fence_value_mu_.unlock();
+        copy_fence_->SetEventOnCompletion(copy_fence_value_, fence_event));
+    copy_fence_value_mu_.unlock();
 
     DWORD retVal = WaitForSingleObject(fence_event, INFINITE);
     if (retVal != WAIT_OBJECT_0) {
