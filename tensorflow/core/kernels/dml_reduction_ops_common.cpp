@@ -48,10 +48,12 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
   ComPtr<ID3D12Resource> output_resource =
       allocator->DecodeDataHandle(output_data);
 
-  DmlInterface* dml_interface = DmlInterface::instance();
-  ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
-  ComPtr<IDMLDeviceContext> dml_device_context =
-      dml_interface->GetDmlDeviceContext();
+  DmlDevice* device = dynamic_cast<DmlDevice*>(ctx->device());
+  OP_REQUIRES(ctx, device,
+              errors::Internal("Device should be DML, but is: ",
+                               ctx->device()->name()));
+  ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
+  ComPtr<IDMLDeviceContext> dml_device_context = device->GetDmlDeviceContext();
 
   ComPtr<IDMLResource> input_dml_resource;
   ComPtr<IDMLResource> output_dml_resource;
@@ -85,7 +87,7 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
       GetDmlReduceFunction(), &dml_input_desc, &dml_output_desc, reduction_axes,
       axe_vec.size(), DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
-  THROW_IF_FAILED(dml_interface->AddComputeOperation(
+  THROW_IF_FAILED(device->AddComputeOperation(
       dml_operation.Get(), input_dml_resource.GetAddressOf(), 1,
       output_dml_resource.GetAddressOf(), 1));
 

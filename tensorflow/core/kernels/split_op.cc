@@ -38,9 +38,7 @@ limitations under the License.
 #include <dml.h>
 #include <vector>
 
-#include "tensorflow/core/common_runtime/dml/dml_allocator.h"
-#include "tensorflow/core/common_runtime/dml/dml_interface.h"
-#include "tensorflow/core/common_runtime/dml/dml_util.h"
+#include "tensorflow/core/common_runtime/dml/dml_device.h"
 #include "tensorflow/core/kernels/dml_util.h"
 
 namespace tensorflow {
@@ -581,10 +579,13 @@ class DmlSplitOp : public OpKernel {
       output_resources[i] = allocator->DecodeDataHandle(output_data_vector[i]);
     }   
 
-    DmlInterface* dml_interface = DmlInterface::instance();
-    ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
+    DmlDevice* device = dynamic_cast<DmlDevice*>(context->device());
+    OP_REQUIRES(context, device,
+                errors::Internal("Device should be DML, but is: ",
+                                 context->device()->name()));
+    ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
     ComPtr<IDMLDeviceContext> dml_device_context =
-        dml_interface->GetDmlDeviceContext();
+        device->GetDmlDeviceContext();
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> filter_dml_resource;
@@ -620,8 +621,9 @@ class DmlSplitOp : public OpKernel {
     for (int i = 0; i < num_split; i++) {
       output_resource_vector[i] = output_dml_resources[i].Get();
     }
-    THROW_IF_FAILED(dml_interface->AddComputeOperation(
-        dml_operation.Get(), input_resources, 2, output_resource_vector.data(), 1));
+    THROW_IF_FAILED(
+        device->AddComputeOperation(dml_operation.Get(), input_resources, 2,
+                                    output_resource_vector.data(), 1));
   }
 };
 

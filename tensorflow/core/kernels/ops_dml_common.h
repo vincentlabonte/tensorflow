@@ -20,9 +20,7 @@ limitations under the License.
 
 #include <dml.h>
 
-#include "tensorflow/core/common_runtime/dml/dml_allocator.h"
-#include "tensorflow/core/common_runtime/dml/dml_interface.h"
-#include "tensorflow/core/common_runtime/dml/dml_util.h"
+#include "tensorflow/core/common_runtime/dml/dml_device.h"
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 #include "tensorflow/core/kernels/dml_util.h"
 

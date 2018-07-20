@@ -21,7 +21,6 @@ limitations under the License.
 #define TENSORFLOW_CORE_COMMON_RUNTIME_DML_DML_UTIL_H_
 
 #include <wrl/client.h>
-#include <vector>
 
 using Microsoft::WRL::ComPtr;
 

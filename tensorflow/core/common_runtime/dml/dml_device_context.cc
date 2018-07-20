@@ -15,9 +15,7 @@ limitations under the License.
 
 //#if TENSORFLOW_USE_DML
 
-#include "tensorflow/core/common_runtime/dma_helper.h"
 #include "tensorflow/core/common_runtime/dml/dml_device_context.h"
-#include "tensorflow/core/common_runtime/dml/dml_interface.h"
 
 namespace tensorflow {
 
@@ -38,8 +36,14 @@ void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
         static_cast<DmlAllocator*>(device->GetAllocator(attrs));
     ComPtr<ID3D12Resource> dst_resource = allocator->DecodeDataHandle(dst_data);
 
-    DmlInterface* dml_interface = DmlInterface::instance();
-    ComPtr<ID3D12Device> d3d12_device = dml_interface->GetD3D12Device();
+    DmlDevice* dml_device = dynamic_cast<DmlDevice*>(device);
+    if (!dml_device) {
+      done(errors::Internal("Device should be DML, but is: ",
+                            device->DebugString()));
+      return;
+    }
+
+    ComPtr<ID3D12Device> d3d12_device = dml_device->GetD3D12Device();
 
     UINT64 width = dst_resource->GetDesc().Width;
     ComPtr<ID3D12Resource> upload_buffer;
@@ -49,11 +53,10 @@ void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&upload_buffer)));
 
-    DmlInterface::MapAndCopyToResource(upload_buffer.Get(), src_data,
-                                       total_bytes);
+    MapAndCopyToResource(upload_buffer.Get(), src_data, total_bytes);
 
     ComPtr<ID3D12CommandAllocator> copy_command_allocator =
-        dml_interface->GetCopyCommandAllocator();
+        dml_device->GetCopyCommandAllocator();
 
     ComPtr<ID3D12GraphicsCommandList> command_list_copy_to_gpu;
     THROW_IF_FAILED(d3d12_device->CreateCommandList(
@@ -65,9 +68,9 @@ void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
     command_list_copy_to_gpu->Close();
 
     ID3D12CommandList* pCopyToGPUCLs[1] = {command_list_copy_to_gpu.Get()};
-    dml_interface->GetCopyCommandQueue()->ExecuteCommandLists(1, pCopyToGPUCLs);
+    dml_device->GetCopyCommandQueue()->ExecuteCommandLists(1, pCopyToGPUCLs);
 
-    dml_interface->AwaitCopyExecution();
+    dml_device->AwaitCopyExecution();
   }
   done(Status::OK());
 }
@@ -89,9 +92,14 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
         static_cast<DmlAllocator*>(device->GetAllocator(attrs));
     ComPtr<ID3D12Resource> src_resource = allocator->DecodeDataHandle(src_data);
 
-    DmlInterface* dml_interface = DmlInterface::instance();
-    ComPtr<ID3D12Device> d3d12_device = dml_interface->GetD3D12Device();
-    dml_interface->AwaitComputeExecution();
+    DmlDevice* dml_device = dynamic_cast<DmlDevice*>(device);
+    if (!dml_device) {
+      done(errors::Internal("Device should be DML, but is: ",
+                            device->DebugString()));
+      return;
+    }
+    ComPtr<ID3D12Device> d3d12_device = dml_device->GetD3D12Device();
+    dml_device->AwaitComputeExecution();
 
     UINT64 width = src_resource->GetDesc().Width;
     ComPtr<ID3D12Resource> readback_buffer;
@@ -102,7 +110,7 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
         IID_PPV_ARGS(&readback_buffer)));
 
     ComPtr<ID3D12CommandAllocator> copy_command_allocator =
-        dml_interface->GetCopyCommandAllocator();
+        dml_device->GetCopyCommandAllocator();
 
     ComPtr<ID3D12GraphicsCommandList> command_list_copy_from_gpu;
     THROW_IF_FAILED(d3d12_device->CreateCommandList(
@@ -114,15 +122,32 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
     command_list_copy_from_gpu->Close();
 
     ID3D12CommandList* pCopyFromGPUCLs[1] = {command_list_copy_from_gpu.Get()};
-    dml_interface->GetCopyCommandQueue()->ExecuteCommandLists(1,
-                                                              pCopyFromGPUCLs);
+    dml_device->GetCopyCommandQueue()->ExecuteCommandLists(1, pCopyFromGPUCLs);
 
-    dml_interface->AwaitCopyExecution();
+    dml_device->AwaitCopyExecution();
 
-    DmlInterface::MapCopyFromResource(readback_buffer.Get(), dst_data,
-                                      total_bytes);
+    MapCopyFromResource(readback_buffer.Get(), dst_data, total_bytes);
   }
   done(Status::OK());
+}
+
+void DmlDeviceContext::MapAndCopyToResource(ID3D12Resource* resource,
+                                            const void* src, UINT64 num_bytes) {
+  D3D12_RANGE range = {0, static_cast<SIZE_T>(num_bytes)};
+  void* data;
+  THROW_IF_FAILED(resource->Map(0, &range, reinterpret_cast<void**>(&data)));
+  memcpy(data, src, static_cast<SIZE_T>(num_bytes));
+  resource->Unmap(0, &range);
+}
+
+void DmlDeviceContext::MapCopyFromResource(ID3D12Resource* resource, void* dest,
+                                           UINT64 num_bytes) {
+  D3D12_RANGE range = {0, static_cast<SIZE_T>(num_bytes)};
+  void* data;
+  THROW_IF_FAILED(resource->Map(0, &range, reinterpret_cast<void**>(&data)));
+  memcpy(dest, data, static_cast<SIZE_T>(num_bytes));
+  range.End = 0;
+  resource->Unmap(0, &range);
 }
 
 }  // namespace tensorflow

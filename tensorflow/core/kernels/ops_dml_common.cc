@@ -45,10 +45,12 @@ void DmlBinaryOp::Compute(OpKernelContext* ctx) {
   ComPtr<ID3D12Resource> in1_resource = allocator->DecodeDataHandle(in1_data);
   ComPtr<ID3D12Resource> out_resource = allocator->DecodeDataHandle(out_data);
 
-  DmlInterface* dml_interface = DmlInterface::instance();
-  ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
-  ComPtr<IDMLDeviceContext> dml_device_context =
-      dml_interface->GetDmlDeviceContext();
+  DmlDevice* device = dynamic_cast<DmlDevice*>(ctx->device());
+  OP_REQUIRES(ctx, device,
+              errors::Internal("Device should be DML, but is: ",
+                               ctx->device()->name()));
+  ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
+  ComPtr<IDMLDeviceContext> dml_device_context = device->GetDmlDeviceContext();
 
   ComPtr<IDMLResource> in0_dml_resource;
   ComPtr<IDMLResource> in1_dml_resource;
@@ -78,9 +80,9 @@ void DmlBinaryOp::Compute(OpKernelContext* ctx) {
 
   IDMLResource* input_resources[2] = {in0_dml_resource.Get(),
                                       in1_dml_resource.Get()};
-  THROW_IF_FAILED(dml_interface->AddComputeOperation(
-      dml_operation.Get(), input_resources, 2,
-                                       out_dml_resource.GetAddressOf(), 1));
+  THROW_IF_FAILED(
+      device->AddComputeOperation(dml_operation.Get(), input_resources, 2,
+                                  out_dml_resource.GetAddressOf(), 1));
 }
 
 void DmlActivationOp::Compute(OpKernelContext* ctx) {
@@ -105,10 +107,12 @@ void DmlActivationOp::Compute(OpKernelContext* ctx) {
   ComPtr<ID3D12Resource> output_resource =
       allocator->DecodeDataHandle(output_data);
 
-  DmlInterface* dml_interface = DmlInterface::instance();
-  ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
-  ComPtr<IDMLDeviceContext> dml_device_context =
-      dml_interface->GetDmlDeviceContext();
+  DmlDevice* device = dynamic_cast<DmlDevice*>(ctx->device());
+  OP_REQUIRES(ctx, device,
+              errors::Internal("Device should be DML, but is: ",
+                               ctx->device()->name()));
+  ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
+  ComPtr<IDMLDeviceContext> dml_device_context = device->GetDmlDeviceContext();
 
   ComPtr<IDMLResource> input_dml_resource;
   ComPtr<IDMLResource> output_dml_resource;
@@ -127,9 +131,9 @@ void DmlActivationOp::Compute(OpKernelContext* ctx) {
       nullptr, DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
   IDMLResource* input_resources[1] = {input_dml_resource.Get()};
-  THROW_IF_FAILED(dml_interface->AddComputeOperation(
-      dml_operation.Get(), input_resources, 1,
-                                       output_dml_resource.GetAddressOf(), 1));
+  THROW_IF_FAILED(
+      device->AddComputeOperation(dml_operation.Get(), input_resources, 1,
+                                  output_dml_resource.GetAddressOf(), 1));
 }
 
 class DmlReluOp : public DmlActivationOp {

@@ -22,22 +22,22 @@ limitations under the License.
 
 #include "tensorflow/core/common_runtime/dml/dml_allocator.h"
 #include "tensorflow/core/common_runtime/dml/dml_device_context.h"
-#include "tensorflow/core/common_runtime/dml/dml_interface.h"
+#include "tensorflow/core/common_runtime/dml/dml_util.h"
 #include "tensorflow/core/common_runtime/local_device.h"
 #include "tensorflow/core/public/session_options.h"
 
 #include <Objbase.h>
 #include <dml.h>
-#include "dml_util.h"
 
 namespace tensorflow {
+
+class DmlDeviceContext;
 
 class DmlDevice : public LocalDevice {
  public:
   DmlDevice(const SessionOptions& options, const string& name,
             Bytes memory_limit, const DeviceLocality& locality,
-            const string& physical_device_desc, DmlAllocator* dml_allocator,
-            Allocator* cpu_allocator, DmlDeviceContext* ctx);
+            Allocator* cpu_allocator);
 
   ~DmlDevice() override;
 
@@ -52,10 +52,48 @@ class DmlDevice : public LocalDevice {
 
   Status Sync() override;
 
+  ID3D12Device* GetD3D12Device() const;
+  IDMLDevice* GetDmlDevice() const;
+  IDMLDeviceContext* GetDmlDeviceContext() const;
+  ID3D12CommandQueue* GetCopyCommandQueue() const;
+  ID3D12CommandAllocator* GetCopyCommandAllocator() const;
+
+  HRESULT AddComputeOperation(IDMLOperation* operation,
+                              IDMLResource* const* input_resources,
+                              UINT input_count,
+                              IDMLResource* const* output_resources,
+                              UINT output_count);
+
+  void AwaitComputeExecution();
+
+  void AwaitCopyExecution();
+
  private:
-  Allocator* cpu_allocator_;                    // not owned
-  DmlAllocator* dml_allocator_;                 // not owned
-  DmlDeviceContext* device_context_;			// not owned
+  // TensorFlow
+  Allocator* cpu_allocator_;
+  DmlAllocator* dml_allocator_;
+  DmlDeviceContext* device_context_;
+
+  // DML
+  ComPtr<ID3D12Device> d3d12_device_;
+
+  // Compute
+  ComPtr<IDMLDevice> dml_device_;
+  ComPtr<ID3D12CommandQueue> compute_command_queue_;
+  mutex dml_device_context_mu_;
+  ComPtr<IDMLDeviceContext> dml_device_context_
+      GUARDED_BY(dml_device_context_mu_);
+  bool is_dml_device_context_open_ GUARDED_BY(dml_device_context_mu_);
+  ComPtr<ID3D12Fence> compute_fence_;
+  mutex compute_fence_value_mu_;
+  uint64_t compute_fence_value_ GUARDED_BY(compute_fence_value_mu_);
+
+  // Copy
+  ComPtr<ID3D12CommandQueue> copy_command_queue_;
+  ComPtr<ID3D12CommandAllocator> copy_command_allocator_;
+  ComPtr<ID3D12Fence> copy_fence_;
+  mutex copy_fence_value_mu_;
+  uint64_t copy_fence_value_ GUARDED_BY(copy_fence_value_mu_);
 };
 
 }  // namespace tensorflow

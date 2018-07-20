@@ -38,9 +38,7 @@ limitations under the License.
 
 #include <dml.h>
 
-#include "tensorflow/core/common_runtime/dml/dml_allocator.h"
-#include "tensorflow/core/common_runtime/dml/dml_interface.h"
-#include "tensorflow/core/common_runtime/dml/dml_util.h"
+#include "tensorflow/core/common_runtime/dml/dml_device.h"
 #include "tensorflow/core/kernels/dml_util.h"
 
 namespace tensorflow {
@@ -518,10 +516,13 @@ class DmlPadOp : public OpKernel {
     ComPtr<ID3D12Resource> output_resource =
         allocator->DecodeDataHandle(output_data);
 
-    DmlInterface* dml_interface = DmlInterface::instance();
-    ComPtr<IDMLDevice> dml_device = dml_interface->GetDmlDevice();
+    DmlDevice* device = dynamic_cast<DmlDevice*>(context->device());
+    OP_REQUIRES(context, device,
+                errors::Internal("Device should be DML, but is: ",
+                                 context->device()->name()));
+    ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
     ComPtr<IDMLDeviceContext> dml_device_context =
-        dml_interface->GetDmlDeviceContext();
+        device->GetDmlDeviceContext();
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> output_dml_resource;
@@ -547,7 +548,7 @@ class DmlPadOp : public OpKernel {
         start_padding, end_padding, fixed_dims, DML_EXECUTION_HINT_FLAGS_NONE,
         &dml_operation));
 
-    THROW_IF_FAILED(dml_interface->AddComputeOperation(
+    THROW_IF_FAILED(device->AddComputeOperation(
         dml_operation.Get(), input_dml_resource.GetAddressOf(), 1,
         output_dml_resource.GetAddressOf(), 1));
   }

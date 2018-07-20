@@ -17,8 +17,6 @@ limitations under the License.
 
 #include "tensorflow/core/common_runtime/device_factory.h"
 #include "tensorflow/core/common_runtime/dml/dml_device.h"
-#include "tensorflow/core/common_runtime/dml/dml_interface.h"
-#include "tensorflow/core/common_runtime/dml/dml_util.h"
 
 namespace tensorflow {
 
@@ -26,8 +24,6 @@ class DmlDeviceFactory : public DeviceFactory {
  public:
   Status CreateDevices(const SessionOptions& options, const string& name_prefix,
                        std::vector<Device*>* devices) override {
-    auto dmlInterface = DmlInterface::instance();
-
     size_t n = 1;
     auto iter = options.config.device_count().find("DML");
     if (iter != options.config.device_count().end()) {
@@ -37,9 +33,8 @@ class DmlDeviceFactory : public DeviceFactory {
     for (int i = 0; i < n; i++) {
       string name = strings::StrCat(name_prefix, "/device:DML:", i);
       devices->push_back(new DmlDevice(
-          options, name, Bytes(256 << 20), DeviceLocality(), "",
-          dmlInterface->GetDmlAllocator(), dmlInterface->GetCPUAllocator(),
-          dmlInterface->GetDeviceContext()));
+          options, name, Bytes(256 << 20), DeviceLocality(),
+          cpu_allocator()));
     }
 
     return Status::OK();
