@@ -41,64 +41,85 @@ limitations under the License.
 
 #include <chrono>
 typedef std::chrono::high_resolution_clock Clock;
+typedef std::chrono::nanoseconds Nanoseconds;
 
 using namespace tensorflow;
 
+std::string DeviceTypeToDevice(std::string device_type);
+
 int main(int argc, char* argv[]) {
-  std::ifstream file(
-      "C:\\Users\\t-vilab.REDMOND\\Desktop\\onnx_to_tf\\squeezenet.pb",
-      std::ios::in | std::ios::binary);
-  GraphDef def;
-  if (!def.ParseFromIstream(&file)) {
+  // Read model
+  if (argc <= 1) {
+    printf("A model path must be specified");
     return -1;
   }
-  file.close();
 
-  // Creates a session.
+  std::ifstream model_file(argv[1], std::ios::in | std::ios::binary);
+  GraphDef def;
+  if (!def.ParseFromIstream(&model_file)) {
+    printf("Unable to parse model: %s", argv[1]);
+    return -1;
+  }
+  model_file.close();
+
+  // Read image
+  if (argc <= 2) {
+    printf("An image path must be specified");
+    return -1;
+  }
+
+  Tensor image_tensor(DataType::DT_FLOAT, {1, 3, 224, 224});
+  std::ifstream imgage_file(argv[2], std::ios::in | std::ios::binary);
+  std::vector<float> image_data;
+  float f;
+  while (imgage_file.read(reinterpret_cast<char*>(&f), sizeof(f)))
+    image_data.push_back(f);
+  imgage_file.close();
+
+  if (image_data.size() != image_tensor.NumElements()) {
+    printf(
+        "The image must be a binary file and must have shape {1, 3, 224, 224}");
+    return -1;
+  }
+  std::copy_n(image_data.begin(), image_data.size(),
+              image_tensor.flat<float>().data());
+
+  // Create session
   SessionOptions options;
   std::unique_ptr<Session> session(NewSession(options));
+
+  std::string device_type = argc <= 3 ? "CPU" : argv [3];
+  std::string device = DeviceTypeToDevice(device_type);
+  if (device == "") {
+    printf("The device type must be \"CPU\" or \"CUDA\" or \"DML\"");
+    return -1;
+  }
+
   if (options.target.empty()) {
-    // graph::SetDefaultDevice("/cpu:0", &def);
-    // graph::SetDefaultDevice("/device:GPU:0", &def);
-    graph::SetDefaultDevice("/device:DML:0", &def);
-  }
-  TF_CHECK_OK(session->Create(def));
-  // NumElements = 150528
-  Tensor tensor(DataType::DT_FLOAT, {1, 3, 224, 224});
-  std::ifstream img(
-      "C:\\Users\\t-vilab.REDMOND\\Desktop\\onnx_to_tf\\img\\pug3.txt",
-      std::ios::in | std::ios::binary);
-  std::vector<float> vec;
-  float f;
-  while (img.read(reinterpret_cast<char*>(&f), sizeof(f))) vec.push_back(f);
-  img.close();
-  std::copy_n(vec.begin(), vec.size(), tensor.flat<float>().data());
-
-  IDXGraphicsAnalysis* ga;
-  HRESULT hr =
-      DXGIGetDebugInterface1(0, __uuidof(ga), reinterpret_cast<void**>(&ga));
-  if (SUCCEEDED(hr)) {
-    ga->BeginCapture();
+    graph::SetDefaultDevice(device, &def);
   }
 
-  auto t1 = Clock::now();
+  auto create_status = session->Create(def);
+  if (!create_status.ok()) {
+    printf("The session creation failed: %s", create_status.error_message().c_str());
+    return -1;
+  }
 
   std::vector<Tensor> outputs;
-  TF_CHECK_OK(
-      session->Run({{"data_0:0", tensor}}, {"Reshape_1:0"}, {}, &outputs));
-  CHECK_EQ(size_t{1}, outputs.size());
-  const Tensor& tensor_result = outputs[0];
-
-  auto t2 = Clock::now();
-  std::cout
-      << "Delta t2-t1: "
-      << std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()
-      << " nanoseconds" << std::endl;
-
-  if (SUCCEEDED(hr)) {
-    ga->EndCapture();
+  auto time_before = Clock::now();
+  auto run_status =
+      session->Run({{"data_0:0", image_tensor}}, {"Reshape_1:0"}, {}, &outputs);
+  auto time_after = Clock::now();
+  if (!run_status.ok()) {
+    printf("The session run failed: %s", run_status.error_message().c_str());
+    return -1;
   }
 
+  int64 nanoseconds =
+      std::chrono::duration_cast<Nanoseconds>(time_after - time_before).count();
+  float time = nanoseconds * 0.000000001;
+
+  const Tensor& tensor_result = outputs[0];
   int max_index = 0;
   float max_value = tensor_result.flat<float>()(0);
   for (int i = 1; i < 1000; ++i) {
@@ -108,5 +129,25 @@ int main(int argc, char* argv[]) {
       max_index = i;
     }
   }
-  printf("%i\n%f\n", max_index, max_value);
+
+  printf(
+      "{"
+      "\"max_index\":%i,"
+      "\"max_value\":%f,"
+      "\"device_type\":\"%s\","
+      "\"time\":%f"
+      "}",
+      max_index, max_value, device_type.c_str(), time);
+}
+
+std::string DeviceTypeToDevice(std::string device_type) {
+  if (device_type == "CPU") {
+    return "/cpu:0";
+  } else if (device_type == "CUDA") {
+    return "/device:GPU:0";
+  } else if (device_type == "DML") {
+    return "/device:DML:0";
+  } else {
+    return "";
+  }
 }
