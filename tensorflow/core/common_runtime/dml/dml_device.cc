@@ -143,10 +143,6 @@ IDMLDeviceContext* DmlDevice::GetDmlDeviceContext() const {
   return dml_device_context_.Get();
 }
 
-ID3D12CommandQueue* DmlDevice::GetCopyCommandQueue() const {
-  return copy_command_queue_.Get();
-}
-
 HRESULT DmlDevice::AddComputeOperation(IDMLOperation* operation,
                                        IDMLResource* const* input_resources,
                                        UINT input_count,

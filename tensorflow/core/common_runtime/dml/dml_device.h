@@ -55,7 +55,6 @@ class DmlDevice : public LocalDevice {
   ID3D12Device* GetD3D12Device() const;
   IDMLDevice* GetDmlDevice() const;
   IDMLDeviceContext* GetDmlDeviceContext() const;
-  ID3D12CommandQueue* GetCopyCommandQueue() const;
 
   HRESULT AddComputeOperation(IDMLOperation* operation,
                               IDMLResource* const* input_resources,
