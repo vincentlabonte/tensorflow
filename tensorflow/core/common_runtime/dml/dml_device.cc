@@ -28,7 +28,8 @@ DmlDevice::DmlDevice(const SessionOptions& options, const string& name,
       device_context_(new DmlDeviceContext()),
       compute_fence_value_(0),
       copy_fence_value_(0),
-      is_dml_device_context_open_(false) {
+      is_dml_device_context_open_(false),
+      is_copy_command_list_open_(false) {
   THROW_IF_FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0,
                                     IID_PPV_ARGS(&d3d12_device_)));
   THROW_IF_FAILED(
@@ -46,6 +47,10 @@ DmlDevice::DmlDevice(const SessionOptions& options, const string& name,
 
   THROW_IF_FAILED(d3d12_device_->CreateCommandAllocator(
       D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(&copy_command_allocator_)));
+
+  THROW_IF_FAILED(d3d12_device_->CreateCommandList(
+      0, D3D12_COMMAND_LIST_TYPE_COPY, copy_command_allocator_.Get(), nullptr,
+      IID_PPV_ARGS(&copy_command_list_)));
 
   dml_allocator_ = new DmlAllocator(
       d3d12_device_.Get(), CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
@@ -142,10 +147,6 @@ ID3D12CommandQueue* DmlDevice::GetCopyCommandQueue() const {
   return copy_command_queue_.Get();
 }
 
-ID3D12CommandAllocator* DmlDevice::GetCopyCommandAllocator() const {
-  return copy_command_allocator_.Get();
-}
-
 HRESULT DmlDevice::AddComputeOperation(IDMLOperation* operation,
                                        IDMLResource* const* input_resources,
                                        UINT input_count,
@@ -163,6 +164,21 @@ HRESULT DmlDevice::AddComputeOperation(IDMLOperation* operation,
   dml_device_context_mu_.unlock();
   return ret;
 }
+
+void DmlDevice::AddCopyOperation(ID3D12Resource* dst_resource,
+                      ID3D12Resource* src_resource) {
+  copy_command_list_mu_.lock();
+  if (!is_copy_command_list_open_) {
+    THROW_IF_FAILED(d3d12_device_->CreateCommandList(
+        0, D3D12_COMMAND_LIST_TYPE_COPY, copy_command_allocator_.Get(), nullptr,
+        IID_PPV_ARGS(&copy_command_list_)));
+    is_copy_command_list_open_ = true;
+  }
+  copy_command_list_->CopyResource(dst_resource, src_resource);
+  copy_command_list_pending_resource_.push_back(dst_resource);
+  copy_command_list_pending_resource_.push_back(src_resource);
+  copy_command_list_mu_.unlock();
+} 
 
 void DmlDevice::AwaitComputeExecution() {
   dml_device_context_mu_.lock();
@@ -191,6 +207,20 @@ void DmlDevice::AwaitComputeExecution() {
 }
 
 void DmlDevice::AwaitCopyExecution() {
+  copy_command_list_mu_.lock();
+  ComPtr<ID3D12GraphicsCommandList> temp_copy_command_list = copy_command_list_;
+  std::vector<ComPtr<ID3D12Resource>> temp_copy_command_list_pending_resource =
+      copy_command_list_pending_resource_;
+  if (is_copy_command_list_open_) {
+    temp_copy_command_list->Close();
+    ID3D12CommandList* copy_command_lists[1] = {temp_copy_command_list.Get()};
+    copy_command_queue_->ExecuteCommandLists(1, copy_command_lists);
+	is_copy_command_list_open_ = false;
+    copy_command_list_ = nullptr;
+    copy_command_list_pending_resource_.clear();
+  }
+  copy_command_list_mu_.unlock(); 
+
   HANDLE fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
   copy_fence_value_mu_.lock();
   ++copy_fence_value_;
@@ -204,6 +234,9 @@ void DmlDevice::AwaitCopyExecution() {
   if (retVal != WAIT_OBJECT_0) {
     DebugBreak();
   }
+
+  temp_copy_command_list = nullptr;
+  temp_copy_command_list_pending_resource.clear();
 }
 
 }  // namespace tensorflow

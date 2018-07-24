@@ -51,6 +51,7 @@ void DmlBinaryOp::Compute(OpKernelContext* ctx) {
                                ctx->device()->name()));
   ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
   ComPtr<IDMLDeviceContext> dml_device_context = device->GetDmlDeviceContext();
+  device->AwaitCopyExecution();
 
   ComPtr<IDMLResource> in0_dml_resource;
   ComPtr<IDMLResource> in1_dml_resource;
@@ -113,6 +114,7 @@ void DmlActivationOp::Compute(OpKernelContext* ctx) {
                                ctx->device()->name()));
   ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
   ComPtr<IDMLDeviceContext> dml_device_context = device->GetDmlDeviceContext();
+  device->AwaitCopyExecution();
 
   ComPtr<IDMLResource> input_dml_resource;
   ComPtr<IDMLResource> output_dml_resource;

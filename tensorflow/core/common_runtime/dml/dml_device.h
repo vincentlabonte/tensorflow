@@ -56,13 +56,15 @@ class DmlDevice : public LocalDevice {
   IDMLDevice* GetDmlDevice() const;
   IDMLDeviceContext* GetDmlDeviceContext() const;
   ID3D12CommandQueue* GetCopyCommandQueue() const;
-  ID3D12CommandAllocator* GetCopyCommandAllocator() const;
 
   HRESULT AddComputeOperation(IDMLOperation* operation,
                               IDMLResource* const* input_resources,
                               UINT input_count,
                               IDMLResource* const* output_resources,
                               UINT output_count);
+
+  void AddCopyOperation(ID3D12Resource* dst_resource,
+                        ID3D12Resource* src_resource);
 
   void AwaitComputeExecution();
 
@@ -91,6 +93,12 @@ class DmlDevice : public LocalDevice {
   // Copy
   ComPtr<ID3D12CommandQueue> copy_command_queue_;
   ComPtr<ID3D12CommandAllocator> copy_command_allocator_;
+  mutex copy_command_list_mu_;
+  ComPtr<ID3D12GraphicsCommandList> copy_command_list_
+      GUARDED_BY(copy_command_list_mu_);
+  bool is_copy_command_list_open_ GUARDED_BY(copy_command_list_mu_);
+  std::vector<ComPtr<ID3D12Resource>> copy_command_list_pending_resource_
+      GUARDED_BY(copy_command_list_mu_);
   ComPtr<ID3D12Fence> copy_fence_;
   mutex copy_fence_value_mu_;
   uint64_t copy_fence_value_ GUARDED_BY(copy_fence_value_mu_);

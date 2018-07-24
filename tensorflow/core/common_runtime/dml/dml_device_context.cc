@@ -55,22 +55,7 @@ void DmlDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
 
     MapAndCopyToResource(upload_buffer.Get(), src_data, total_bytes);
 
-    ComPtr<ID3D12CommandAllocator> copy_command_allocator =
-        dml_device->GetCopyCommandAllocator();
-
-    ComPtr<ID3D12GraphicsCommandList> command_list_copy_to_gpu;
-    THROW_IF_FAILED(d3d12_device->CreateCommandList(
-        0, D3D12_COMMAND_LIST_TYPE_COPY, copy_command_allocator.Get(), nullptr,
-        IID_PPV_ARGS(&command_list_copy_to_gpu)));
-
-    command_list_copy_to_gpu->CopyResource(dst_resource.Get(),
-                                           upload_buffer.Get());
-    command_list_copy_to_gpu->Close();
-
-    ID3D12CommandList* pCopyToGPUCLs[1] = {command_list_copy_to_gpu.Get()};
-    dml_device->GetCopyCommandQueue()->ExecuteCommandLists(1, pCopyToGPUCLs);
-
-    dml_device->AwaitCopyExecution();
+    dml_device->AddCopyOperation(dst_resource.Get(), upload_buffer.Get());
   }
   done(Status::OK());
 }
@@ -109,21 +94,7 @@ void DmlDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
         D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
         IID_PPV_ARGS(&readback_buffer)));
 
-    ComPtr<ID3D12CommandAllocator> copy_command_allocator =
-        dml_device->GetCopyCommandAllocator();
-
-    ComPtr<ID3D12GraphicsCommandList> command_list_copy_from_gpu;
-    THROW_IF_FAILED(d3d12_device->CreateCommandList(
-        0, D3D12_COMMAND_LIST_TYPE_COPY, copy_command_allocator.Get(), nullptr,
-        IID_PPV_ARGS(&command_list_copy_from_gpu)));
-
-    command_list_copy_from_gpu->CopyResource(readback_buffer.Get(),
-                                             src_resource.Get());
-    command_list_copy_from_gpu->Close();
-
-    ID3D12CommandList* pCopyFromGPUCLs[1] = {command_list_copy_from_gpu.Get()};
-    dml_device->GetCopyCommandQueue()->ExecuteCommandLists(1, pCopyFromGPUCLs);
-
+    dml_device->AddCopyOperation(readback_buffer.Get(), src_resource.Get());
     dml_device->AwaitCopyExecution();
 
     MapCopyFromResource(readback_buffer.Get(), dst_data, total_bytes);

@@ -1006,6 +1006,7 @@ class DmlConv2DOp : public BinaryOp<float> {
     ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
     ComPtr<IDMLDeviceContext> dml_device_context =
         device->GetDmlDeviceContext();
+    device->AwaitCopyExecution();
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> filter_dml_resource;

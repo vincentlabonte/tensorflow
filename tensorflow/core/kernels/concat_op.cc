@@ -416,6 +416,7 @@ class DmlConcatBaseOp : public OpKernel {
     ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
     ComPtr<IDMLDeviceContext> dml_device_context =
         device->GetDmlDeviceContext();
+    device->AwaitCopyExecution();
 
     std::vector<ComPtr<IDMLResource>> input_dml_resources(values.size());
     ComPtr<IDMLResource> output_dml_resource;

@@ -523,6 +523,7 @@ class DmlPadOp : public OpKernel {
     ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
     ComPtr<IDMLDeviceContext> dml_device_context =
         device->GetDmlDeviceContext();
+    device->AwaitCopyExecution();
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> output_dml_resource;
