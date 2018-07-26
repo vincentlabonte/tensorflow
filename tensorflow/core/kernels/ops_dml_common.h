@@ -37,14 +37,6 @@ class DmlBinaryOp : public BinaryOpShared {
   virtual DML_ELEMENT_WISE_FUNCTION GetDmlElementWiseFunction() = 0;
 };
 
-class DmlActivationOp : public OpKernel {
- public:
-  explicit DmlActivationOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
-  void Compute(OpKernelContext* ctx) override;
-
-  virtual DML_ACTIVATION_FUNCTION GetDmlActivationFunction() = 0;
-};
-
 }  // end namespace tensorflow
 
 #endif  // TENSORFLOW_KERNELS_OPS_DML_COMMON_H_
