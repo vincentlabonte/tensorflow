@@ -22,22 +22,19 @@ namespace tensorflow {
 struct AllocationInfo {
   DmlAllocator* owner = nullptr;
   ComPtr<ID3D12Resource> resource;
-
-  // The size requested during Alloc(), which may be smaller than the physical
-  // resource size
-  size_t requestedSize = 0;
+  size_t requested_size = 0;
 };
 
 DmlAllocator::DmlAllocator(ID3D12Device* device,
-                           const D3D12_HEAP_PROPERTIES& heapProps,
-                           D3D12_HEAP_FLAGS heapFlags,
-                           D3D12_RESOURCE_FLAGS resourceFlags,
-                           D3D12_RESOURCE_STATES initialState)
-    : m_device(device),
-      m_heapProperties(heapProps),
-      m_heapFlags(heapFlags),
-      m_resourceFlags(resourceFlags),
-      m_initialState(initialState) {}
+                           const D3D12_HEAP_PROPERTIES& heap_props,
+                           D3D12_HEAP_FLAGS heap_flags,
+                           D3D12_RESOURCE_FLAGS resource_flags,
+                           D3D12_RESOURCE_STATES initial_state)
+    : device_(device),
+      heap_properties_(heap_props),
+      heap_flags_(heap_flags),
+      resource_flags_(resource_flags),
+      initial_state_(initial_state) {}
 
 DmlAllocator::~DmlAllocator() {}
 
@@ -49,15 +46,15 @@ DmlAllocator::~DmlAllocator() {}
   assert((1ull << index) >= size);  // This must be true unless there were some
                                     // strange rounding issues
 
-  // The smallest bucket is 2^n bytes large, where n = c_minResourceSizeExponent
-  index = std::max<std::ptrdiff_t>(index, c_minResourceSizeExponent);
-  index -= c_minResourceSizeExponent;
+  // The smallest bucket is 2^n bytes large, where n = kMinResourceSizeExponent
+  index = std::max<std::ptrdiff_t>(index, kMinResourceSizeExponent);
+  index -= kMinResourceSizeExponent;
 
   return index;
 }
 
 /*static*/ uint64_t DmlAllocator::GetBucketSizeFromIndex(std::ptrdiff_t index) {
-  return (1ull << (index + c_minResourceSizeExponent));
+  return (1ull << (index + kMinResourceSizeExponent));
 }
 
 string DmlAllocator::Name() { return "device:DML"; }
@@ -66,25 +63,25 @@ void* DmlAllocator::AllocateRaw(size_t alignment, size_t num_bytes) {
   size_t size = std::max<size_t>(1, num_bytes);
 
   // Find the bucket for this allocation size
-  std::ptrdiff_t bucketIndex = GetBucketIndexFromSize(size);
+  std::ptrdiff_t bucket_index = GetBucketIndexFromSize(size);
 
-  if (m_pool.size() <= bucketIndex) {
+  if (pool_.size() <= bucket_index) {
     // Ensure there are sufficient buckets
-    m_pool.resize(bucketIndex + 1);
+    pool_.resize(bucket_index + 1);
   }
 
-  Bucket& bucket = m_pool[bucketIndex];
-  const uint64_t bucketSize = GetBucketSizeFromIndex(bucketIndex);
+  Bucket& bucket = pool_[bucket_index];
+  const uint64_t bucket_size = GetBucketSizeFromIndex(bucket_index);
 
   ComPtr<ID3D12Resource> resource;
   bucket.mu.lock();
   if (bucket.resources.empty()) {
     bucket.mu.unlock();
     // No more resources in this bucket - allocate a new one
-    THROW_IF_FAILED(m_device->CreateCommittedResource(
-        &m_heapProperties, m_heapFlags,
-        &CD3DX12_RESOURCE_DESC::Buffer(bucketSize, m_resourceFlags),
-        m_initialState, nullptr, IID_PPV_ARGS(&resource)));
+    THROW_IF_FAILED(device_->CreateCommittedResource(
+        &heap_properties_, heap_flags_,
+        &CD3DX12_RESOURCE_DESC::Buffer(bucket_size, resource_flags_),
+        initial_state_, nullptr, IID_PPV_ARGS(&resource)));
   } else {
     // Retrieve a resource from the bucket
     resource = std::move(bucket.resources.back());
@@ -93,53 +90,55 @@ void* DmlAllocator::AllocateRaw(size_t alignment, size_t num_bytes) {
   }
 
   assert(resource != nullptr);
-  assert(resource->GetDesc().Width == bucketSize);
+  assert(resource->GetDesc().Width == bucket_size);
 
-  auto allocInfo = std::make_unique<AllocationInfo>();
-  allocInfo->owner = this;
-  allocInfo->resource = std::move(resource);  // Take ownership of this resource
-  allocInfo->requestedSize = size;
+  auto alloc_info = std::make_unique<AllocationInfo>();
+  alloc_info->owner = this;
+  alloc_info->resource =
+      std::move(resource);  // Take ownership of this resource
+  alloc_info->requested_size = size;
 
-  return allocInfo.release();  // "Detach"
+  return alloc_info.release();  // "Detach"
 }
 
 void DmlAllocator::DeallocateRaw(void* ptr) {
-  std::unique_ptr<AllocationInfo> allocInfo(static_cast<AllocationInfo*>(ptr));
+  std::unique_ptr<AllocationInfo> alloc_info(static_cast<AllocationInfo*>(ptr));
 
-  assert(allocInfo != nullptr);  // Can't free nullptr
+  assert(alloc_info != nullptr);  // Can't free nullptr
 
-  if (allocInfo->owner != this) {
+  if (alloc_info->owner != this) {
     // This allocation doesn't belong to this allocator!
-    allocInfo.release();
+    alloc_info.release();
     throw E_INVALIDARG;
   }
 
-  std::ptrdiff_t bucketIndex = GetBucketIndexFromSize(allocInfo->requestedSize);
+  std::ptrdiff_t bucket_index =
+      GetBucketIndexFromSize(alloc_info->requested_size);
 
   // The resource size must match the bucket size...
-  assert(GetBucketSizeFromIndex(bucketIndex) ==
-         allocInfo->resource->GetDesc().Width);
-  assert(m_pool.size() > bucketIndex);
+  assert(GetBucketSizeFromIndex(bucket_index) ==
+         alloc_info->resource->GetDesc().Width);
+  assert(pool_.size() > bucket_index);
 
   // Return the resource to the bucket
-  Bucket& bucket = m_pool[bucketIndex];
+  Bucket& bucket = pool_[bucket_index];
   bucket.mu.lock();
-  bucket.resources.push_back(std::move(allocInfo->resource));
+  bucket.resources.push_back(std::move(alloc_info->resource));
   bucket.mu.unlock();
 
   // Free the allocation info
-  allocInfo.reset();
+  alloc_info.reset();
 }
 
-ID3D12Resource* DmlAllocator::DecodeDataHandle(const void* opaqueHandle) {
-  const auto* allocInfo = static_cast<const AllocationInfo*>(opaqueHandle);
+ID3D12Resource* DmlAllocator::DecodeDataHandle(const void* opaque_handle) {
+  const auto* alloc_info = static_cast<const AllocationInfo*>(opaque_handle);
 
-  if (allocInfo->owner != this) {
+  if (alloc_info->owner != this) {
     // This allocation doesn't belong to this allocator!
     throw E_INVALIDARG;
   }
 
-  return allocInfo->resource.Get();
+  return alloc_info->resource.Get();
 }
 
 }  // namespace tensorflow

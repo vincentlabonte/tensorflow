@@ -40,9 +40,9 @@ namespace tensorflow {
 
 class DmlAllocator : public Allocator {
  public:
-  DmlAllocator(ID3D12Device* device, const D3D12_HEAP_PROPERTIES& heapProps,
-               D3D12_HEAP_FLAGS heapFlags, D3D12_RESOURCE_FLAGS resourceFlags,
-               D3D12_RESOURCE_STATES initialState);
+  DmlAllocator(ID3D12Device* device, const D3D12_HEAP_PROPERTIES& heap_props,
+               D3D12_HEAP_FLAGS heap_flags, D3D12_RESOURCE_FLAGS resource_flags,
+               D3D12_RESOURCE_STATES initial_state);
   virtual ~DmlAllocator() override;
   string Name() override;
   void* AllocateRaw(size_t alignment, size_t num_bytes) override;
@@ -52,10 +52,10 @@ class DmlAllocator : public Allocator {
 
   // Returns a weak pointer to the ID3D12Resource associated with an opaque
   // allocation handle returned by AllocateRaw.
-  ID3D12Resource* DecodeDataHandle(const void* opaqueHandle);
+  ID3D12Resource* DecodeDataHandle(const void* opaque_handle);
 
  private:
-  static const uint32_t c_minResourceSizeExponent = 16;  // 2^16 = 64KB
+  static const uint32_t kMinResourceSizeExponent = 16;  // 2^16 = 64KB
 
   // The pool consists of a number of buckets, and each bucket contains a number
   // of resources of the same size. The resources in each bucket are always
@@ -69,13 +69,13 @@ class DmlAllocator : public Allocator {
   static std::ptrdiff_t GetBucketIndexFromSize(uint64_t size);
   static uint64_t GetBucketSizeFromIndex(std::ptrdiff_t index);
 
-  ComPtr<ID3D12Device> m_device;
-  D3D12_HEAP_PROPERTIES m_heapProperties;
-  D3D12_HEAP_FLAGS m_heapFlags;
-  D3D12_RESOURCE_FLAGS m_resourceFlags;
-  D3D12_RESOURCE_STATES m_initialState;
+  ComPtr<ID3D12Device> device_;
+  D3D12_HEAP_PROPERTIES heap_properties_;
+  D3D12_HEAP_FLAGS heap_flags_;
+  D3D12_RESOURCE_FLAGS resource_flags_;
+  D3D12_RESOURCE_STATES initial_state_;
 
-  std::vector<Bucket> m_pool;
+  std::vector<Bucket> pool_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(DmlAllocator);
 };
