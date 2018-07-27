@@ -1,4 +1,4 @@
-#include "tensorflow/core/kernels/dml_reduction_ops_common.h"
+#include "tensorflow/core/kernels/dml_reduction_ops.h"
 
 namespace tensorflow {
 
