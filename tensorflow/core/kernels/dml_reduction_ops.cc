@@ -3,6 +3,8 @@
 namespace tensorflow {
 
 void DmlReductionOp::Compute(OpKernelContext* ctx) {
+  DmlOpKernel::Compute(ctx);
+
   const Tensor& data = ctx->input(0);
   const Tensor& axes = ctx->input(1);
   VLOG(1) << "data shape: " << data.shape().DebugString();
@@ -36,35 +38,23 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
       ctx, ctx->allocate_temp(ctx->expected_output_dtype(0),
                               helper.out_reshape(), &tmp_out, alloc_attr));
 
-  AllocatorAttributes attrs;
-  DmlAllocator* allocator =
-      static_cast<DmlAllocator*>(ctx->device()->GetAllocator(attrs));
-
   const void* input_data = data.tensor_data().data();
   const void* output_data = tmp_out.tensor_data().data();
 
   ComPtr<ID3D12Resource> input_resource =
-      allocator->DecodeDataHandle(input_data);
+      allocator_->DecodeDataHandle(input_data);
   ComPtr<ID3D12Resource> output_resource =
-      allocator->DecodeDataHandle(output_data);
-
-  DmlDevice* device = dynamic_cast<DmlDevice*>(ctx->device());
-  OP_REQUIRES(ctx, device,
-              errors::Internal("Device should be DML, but is: ",
-                               ctx->device()->name()));
-  ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
-  ComPtr<IDMLDeviceContext> dml_device_context = device->GetDmlDeviceContext();
-  device->AwaitCopyExecution();
+      allocator_->DecodeDataHandle(output_data);
 
   ComPtr<IDMLResource> input_dml_resource;
   ComPtr<IDMLResource> output_dml_resource;
 
-  THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
-                                                     &input_dml_resource));
-  THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
-                                                     &output_dml_resource));
+  THROW_IF_FAILED(dml_device_context_->CreateResource(input_resource.Get(),
+                                                      &input_dml_resource));
+  THROW_IF_FAILED(dml_device_context_->CreateResource(output_resource.Get(),
+                                                      &output_dml_resource));
 
-  DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&data);
+  DML_TENSOR_DESC dml_input_desc = CreateDmlTensorDesc(&data);
   DML_TENSOR_DESC dml_output_desc = {DML_TENSOR_DATA_TYPE_FLOAT32,
                                      DML_TENSOR_FLAGS_NONE,
                                      dml_input_desc.dimCount};
@@ -84,11 +74,11 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
   }
 
   ComPtr<IDMLOperation> dml_operation;
-  THROW_IF_FAILED(dml_device->CreateReduceOperation(
+  THROW_IF_FAILED(dml_device_->CreateReduceOperation(
       GetDmlReduceFunction(), &dml_input_desc, &dml_output_desc, reduction_axes,
       axe_vec.size(), DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
-  THROW_IF_FAILED(device->AddComputeOperation(
+  THROW_IF_FAILED(device_->AddComputeOperation(
       dml_operation.Get(), input_dml_resource.GetAddressOf(), 1,
       output_dml_resource.GetAddressOf(), 1));
 
@@ -101,7 +91,6 @@ void DmlReductionOp::Compute(OpKernelContext* ctx) {
   }
   ctx->set_output(0, out);
 }
-
 
 REGISTER_KERNEL_BUILDER(Name("Max")
                             .Device(DEVICE_DML)
