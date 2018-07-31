@@ -34,12 +34,7 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
 
-#include <wrl/client.h>
-
-#include <dml.h>
-
-#include "tensorflow/core/common_runtime/dml/dml_device.h"
-#include "tensorflow/core/kernels/dml_util.h"
+#include "tensorflow/core/kernels/dml_ops_common.h"
 
 namespace tensorflow {
 
@@ -470,11 +465,13 @@ REGISTER_KERNEL_BUILDER(Name("PadV2")
 #undef REGISTER_SYCL_KERNEL
 #endif  // TENSORFLOW_USE_SYCL
 
-class DmlPadOp : public OpKernel {
+class DmlPadOp : public DmlOpKernel {
  public:
-  explicit DmlPadOp(OpKernelConstruction* context) : OpKernel(context) {}
+  explicit DmlPadOp(OpKernelConstruction* context) : DmlOpKernel(context) {}
 
   void Compute(OpKernelContext* context) override {
+    DmlOpKernel::Compute(context);
+
     const Tensor& data = context->input(0);
     const Tensor& pads = context->input(1);
     const int dims = data.dims();
@@ -504,37 +501,24 @@ class DmlPadOp : public OpKernel {
     Tensor* output = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
 
-    AllocatorAttributes attrs;
-    DmlAllocator* allocator =
-        static_cast<DmlAllocator*>(context->device()->GetAllocator(attrs));
-
     const void* input_data = data.tensor_data().data();
     const void* output_data = output->tensor_data().data();
 
     ComPtr<ID3D12Resource> input_resource =
-        allocator->DecodeDataHandle(input_data);
+        allocator_->DecodeDataHandle(input_data);
     ComPtr<ID3D12Resource> output_resource =
-        allocator->DecodeDataHandle(output_data);
-
-    DmlDevice* device = dynamic_cast<DmlDevice*>(context->device());
-    OP_REQUIRES(context, device,
-                errors::Internal("Device should be DML, but is: ",
-                                 context->device()->name()));
-    ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
-    ComPtr<IDMLDeviceContext> dml_device_context =
-        device->GetDmlDeviceContext();
-    device->AwaitCopyExecution();
+        allocator_->DecodeDataHandle(output_data);
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> output_dml_resource;
 
-    THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
-                                                       &input_dml_resource));
-    THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
-                                                       &output_dml_resource));
+    THROW_IF_FAILED(dml_device_context_->CreateResource(input_resource.Get(),
+                                                        &input_dml_resource));
+    THROW_IF_FAILED(dml_device_context_->CreateResource(output_resource.Get(),
+                                                        &output_dml_resource));
 
-    DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&data);
-    DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(output);
+    DML_TENSOR_DESC dml_input_desc = CreateDmlTensorDesc(&data);
+    DML_TENSOR_DESC dml_output_desc = CreateDmlTensorDesc(output);
 
     UINT start_padding[5];
     UINT end_padding[5];
@@ -544,12 +528,12 @@ class DmlPadOp : public OpKernel {
     }
 
     ComPtr<IDMLOperation> dml_operation;
-    THROW_IF_FAILED(dml_device->CreatePaddingOperation(
+    THROW_IF_FAILED(dml_device_->CreatePaddingOperation(
         &dml_input_desc, &dml_output_desc, DML_PADDING_MODE_CONSTANT, 0.f,
         start_padding, end_padding, fixed_dims, DML_EXECUTION_HINT_FLAGS_NONE,
         &dml_operation));
 
-    THROW_IF_FAILED(device->AddComputeOperation(
+    THROW_IF_FAILED(device_->AddComputeOperation(
         dml_operation.Get(), input_dml_resource.GetAddressOf(), 1,
         output_dml_resource.GetAddressOf(), 1));
   }
