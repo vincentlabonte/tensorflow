@@ -142,5 +142,3 @@ ID3D12Resource* DmlAllocator::DecodeDataHandle(const void* opaque_handle) {
 }
 
 }  // namespace tensorflow
-
-//#endif  // TENSORFLOW_USE_DML

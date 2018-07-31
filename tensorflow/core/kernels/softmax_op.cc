@@ -102,5 +102,4 @@ REGISTER_KERNEL_BUILDER(
     Name("Softmax").Device(DEVICE_SYCL).TypeConstraint<double>("T"),
     SoftmaxOp<SYCLDevice, double>);
 #endif  // TENSORFLOW_USE_SYCL
-
 }  // namespace tensorflow
