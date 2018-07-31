@@ -29,13 +29,6 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/platform/logging.h"
 
-#include <wrl/client.h>
-
-#include <dml.h>
-
-#include "tensorflow/core/common_runtime/dml/dml_device.h"
-#include "tensorflow/core/kernels/dml_util.h" 
-
 namespace tensorflow {
 
 // inv = InvertPermutationOp(T<int32/int64> p) takes a permutation of
