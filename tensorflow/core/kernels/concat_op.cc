@@ -29,12 +29,7 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
-#include <wrl/client.h>
-
-#include <dml.h>
-
-#include "tensorflow/core/common_runtime/dml/dml_device.h"
-#include "tensorflow/core/kernels/dml_util.h"
+#include "tensorflow/core/kernels/dml_ops_common.h"
 
 namespace tensorflow {
 
@@ -280,14 +275,16 @@ REGISTER_KERNEL_BUILDER(Name("ConcatV2")
 #endif  // TENSORFLOW_USE_SYCL
 
 template <typename T, AxisArgumentName AxisArgName>
-class DmlConcatBaseOp : public OpKernel {
+class DmlConcatBaseOp : public DmlOpKernel {
  public:
   typedef std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>
       ConstMatrixVector;
 
-  explicit DmlConcatBaseOp(OpKernelConstruction* c) : OpKernel(c) {}
+  explicit DmlConcatBaseOp(OpKernelConstruction* c) : DmlOpKernel(c) {}
 
   void Compute(OpKernelContext* c) override {
+    DmlOpKernel::Compute(c);
+
     const Tensor* concat_dim_tensor;
     const char* axis_attribute_name =
         AxisArgName == NAME_IS_AXIS
@@ -392,10 +389,6 @@ class DmlConcatBaseOp : public OpKernel {
       return;
     }
 
-    AllocatorAttributes attrs;
-    DmlAllocator* allocator =
-        static_cast<DmlAllocator*>(c->device()->GetAllocator(attrs));
-
     std::vector<const void*> input_data_vector(values.size());
     for (int i = 0; i < values.size(); i++) {
       input_data_vector[i] = values[i].tensor_data().data();
@@ -404,44 +397,34 @@ class DmlConcatBaseOp : public OpKernel {
 
     std::vector<ComPtr<ID3D12Resource>> input_resources(values.size());
     for (int i = 0; i < values.size(); i++) {
-      input_resources[i] = allocator->DecodeDataHandle(input_data_vector[i]);
+      input_resources[i] = allocator_->DecodeDataHandle(input_data_vector[i]);
     }
     ComPtr<ID3D12Resource> output_resource =
-        allocator->DecodeDataHandle(output_data);
-
-    DmlDevice* device = dynamic_cast<DmlDevice*>(c->device());
-    OP_REQUIRES(c, device,
-                errors::Internal("Device should be DML, but is: ",
-                                 c->device()->name()));
-    ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
-    ComPtr<IDMLDeviceContext> dml_device_context =
-        device->GetDmlDeviceContext();
-    device->AwaitCopyExecution();
+        allocator_->DecodeDataHandle(output_data);
 
     std::vector<ComPtr<IDMLResource>> input_dml_resources(values.size());
     ComPtr<IDMLResource> output_dml_resource;
 
     for (int i = 0; i < values.size(); i++) {
-      THROW_IF_FAILED(dml_device_context->CreateResource(
+      THROW_IF_FAILED(dml_device_context_->CreateResource(
           input_resources[i].Get(), &input_dml_resources[i]));
     }
-    THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
-                                                       &output_dml_resource));
-
+    THROW_IF_FAILED(dml_device_context_->CreateResource(output_resource.Get(),
+                                                        &output_dml_resource));
 
     std::vector<DML_TENSOR_DESC> dml_input_descs(values.size());
     for (int i = 0; i < values.size(); i++) {
-      dml_input_descs[i] = DmlUtil::CreateDmlTensorDesc(&values[i]);
-	}
-    DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(output);
+      dml_input_descs[i] = CreateDmlTensorDesc(&values[i]);
+    }
+    DML_TENSOR_DESC dml_output_desc = CreateDmlTensorDesc(output);
 
-	std::vector<DML_TENSOR_DESC*> dml_input_descs_ptrs(values.size());
+    std::vector<DML_TENSOR_DESC*> dml_input_descs_ptrs(values.size());
     for (int i = 0; i < values.size(); i++) {
       dml_input_descs_ptrs[i] = &dml_input_descs[i];
     }
 
     ComPtr<IDMLOperation> dml_operation;
-    THROW_IF_FAILED(dml_device->CreateJoinOperation(
+    THROW_IF_FAILED(dml_device_->CreateJoinOperation(
         dml_input_descs_ptrs.data(), values.size(), &dml_output_desc, axis,
         DML_EXECUTION_HINT_FLAGS_NONE, dml_operation.GetAddressOf()));
 
@@ -450,7 +433,7 @@ class DmlConcatBaseOp : public OpKernel {
       input_resource_vector[i] = input_dml_resources[i].Get();
     }
 
-    THROW_IF_FAILED(device->AddComputeOperation(
+    THROW_IF_FAILED(device_->AddComputeOperation(
         dml_operation.Get(), input_resource_vector.data(), values.size(),
         output_dml_resource.GetAddressOf(), 1));
   }
