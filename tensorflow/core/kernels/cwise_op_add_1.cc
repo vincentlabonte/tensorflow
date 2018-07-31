@@ -14,9 +14,6 @@ limitations under the License.
 ==============================================================================*/
 
 #include "tensorflow/core/kernels/cwise_ops_common.h"
-#include "tensorflow/core/kernels/ops_dml_common.h"
-
-using Microsoft::WRL::ComPtr;
 
 namespace tensorflow {
 REGISTER6(BinaryOp, CPU, "Add", functor::add, float, Eigen::half, double, int32,
@@ -69,17 +66,5 @@ REGISTER_KERNEL_BUILDER(Name("AddV2")
                             .TypeConstraint<int32>("T"),
                         BinaryOp<CPUDevice, functor::add<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
-
-class DmlAddBinaryOp : public DmlBinaryOp {
- public:
-  explicit DmlAddBinaryOp(OpKernelConstruction* ctx) : DmlBinaryOp(ctx) {}
-
-  DML_ELEMENT_WISE_FUNCTION GetDmlElementWiseFunction() override {
-    return DML_ELEMENT_WISE_FUNCTION_ADD;
-  }
-};
-
-REGISTER_KERNEL_BUILDER(
-    Name("Add").Device(DEVICE_DML).TypeConstraint<float>("T"), DmlAddBinaryOp);
 
 }  // namespace tensorflow
