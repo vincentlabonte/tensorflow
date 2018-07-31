@@ -19,6 +19,8 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor.h"
 
+#include "tensorflow/core/kernels/dml_ops_common.h"
+
 namespace tensorflow {
 
 class TransposeOp : public OpKernel {
@@ -122,9 +124,18 @@ class ConjugateTransposeSyclOp : public TransposeOp {
 };
 #endif  // TENSORFLOW_USE_SYCL
 
-class DmlTransposeOp : public TransposeOp {
+class DmlTransposeOp : public DmlOpKernel {
  public:
-  explicit DmlTransposeOp(OpKernelConstruction* ctx) : TransposeOp(ctx) {}
+  explicit DmlTransposeOp(OpKernelConstruction* ctx) : DmlOpKernel(ctx) {}
+  void Compute(OpKernelContext* ctx) override;
+  virtual Status DoTranspose(OpKernelContext* ctx, const Tensor& in,
+                             gtl::ArraySlice<int32> perm, Tensor* out) = 0;
+  virtual bool IsConjugate() const { return false; }
+};
+
+class DmlTransposeDmlOp : public DmlTransposeOp {
+ public:
+  explicit DmlTransposeDmlOp(OpKernelConstruction* ctx) : DmlTransposeOp(ctx) {}
   Status DoTranspose(OpKernelContext* ctx, const Tensor& in,
                      gtl::ArraySlice<int32> perm, Tensor* out) override;
 };

@@ -318,8 +318,72 @@ TF_CALL_POD_TYPES(REGISTER);
 #undef REGISTER
 #endif
 
-Status DmlTransposeOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
-                                   gtl::ArraySlice<int32> perm, Tensor* out) {
+void DmlTransposeOp::Compute(OpKernelContext* ctx) {
+  DmlOpKernel::Compute(ctx);
+
+  const Tensor& input = ctx->input(0);
+  const Tensor& perm = ctx->input(1);
+  // Preliminary validation of sizes.
+  OP_REQUIRES(ctx, TensorShapeUtils::IsVector(perm.shape()),
+              errors::InvalidArgument("perm must be a vector, not ",
+                                      perm.shape().DebugString()));
+
+  // Although Tperm may be an int64 type, an int32 is sufficient to hold
+  // dimension range values, so the narrowing here should be safe.
+  std::vector<int32> permutation;
+  const int dims = input.dims();
+  if (perm.dtype() == DT_INT32) {
+    OP_REQUIRES_OK(ctx, PermutationHelper<int32>(perm, dims, &permutation));
+  } else {
+    OP_REQUIRES_OK(ctx, PermutationHelper<int64>(perm, dims, &permutation));
+  }
+  TensorShape shape;
+
+  // Check whether permutation is a permutation of integers of [0 .. dims).
+  gtl::InlinedVector<bool, 8> bits(dims);
+  bool is_identity = true;
+  for (int i = 0; i < dims; ++i) {
+    const int32 d = permutation[i];
+    OP_REQUIRES(
+        ctx, 0 <= d && d < dims,
+        errors::InvalidArgument(d, " is out of range [0 .. ", dims, ")"));
+    bits[d] = true;
+    const auto dim_size = input.dim_size(d);
+    shape.AddDim(dim_size);
+    if (d != i) {
+      is_identity = false;
+    }
+  }
+  for (int i = 0; i < dims; ++i) {
+    OP_REQUIRES(
+        ctx, bits[i],
+        errors::InvalidArgument(i, " is missing from {",
+                                str_util::Join(permutation, ","), "}."));
+  }
+
+  // 0-D, 1-D, and identity transposes do nothing.
+  if (!IsConjugate() && (dims <= 1 || is_identity)) {
+    ctx->set_output(0, input);
+    return;
+  } else if (!IsConjugate() && internal::NonSingletonDimensionsAlign(
+                                   input.shape(), permutation)) {
+    Tensor output;
+    OP_REQUIRES(ctx, output.CopyFrom(input, shape),
+                errors::Unknown("Error reshaping Tensor."));
+    ctx->set_output(0, output);
+    return;
+  }
+
+  Tensor* output = nullptr;
+  OP_REQUIRES_OK(ctx, ctx->allocate_output(0, shape, &output));
+  if (shape.num_elements() > 0) {
+    OP_REQUIRES_OK(ctx, DoTranspose(ctx, input, permutation, output));
+  }
+}
+
+Status DmlTransposeDmlOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
+                                      gtl::ArraySlice<int32> perm,
+                                      Tensor* out) {
   gtl::InlinedVector<int64, 4> in_dim_sizes = in.shape().dim_sizes();
 
   if (in.dims() > DML_TENSOR_DIMENSION_COUNT_NCHW) throw E_INVALIDARG;
@@ -333,11 +397,11 @@ Status DmlTransposeOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
   }
 
   // Input tensor will use strides to perm the permuted copy.
-  DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&in);
+  DML_TENSOR_DESC dml_input_desc = CreateDmlTensorDesc(&in);
   dml_input_desc.flags = DML_TENSOR_FLAGS_USE_STRIDES;
 
   // Output tensor will have same shape as input, but no striding.
-  DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(out);
+  DML_TENSOR_DESC dml_output_desc = CreateDmlTensorDesc(out);
 
   // Fill leading tensor desc sizes/strides with defaults.
   const int leadingDims = static_cast<int32_t>(DML_TENSOR_DIMENSION_COUNT_NCHW -
@@ -365,52 +429,39 @@ Status DmlTransposeOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
     dml_output_desc.strides[dim_dml] = 0;
   }
 
-  AllocatorAttributes attrs;
-  DmlAllocator* allocator =
-      static_cast<DmlAllocator*>(ctx->device()->GetAllocator(attrs));
-
   const void* input_data = in.tensor_data().data();
   const void* output_data = out->tensor_data().data();
 
   ComPtr<ID3D12Resource> input_resource =
-      allocator->DecodeDataHandle(input_data);
+      allocator_->DecodeDataHandle(input_data);
   ComPtr<ID3D12Resource> output_resource =
-      allocator->DecodeDataHandle(output_data);
-
-  DmlDevice* device = dynamic_cast<DmlDevice*>(ctx->device());
-  if (!device)
-    return errors::Internal("Device should be DML, but is: ",
-                            ctx->device()->name());
-  ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
-  ComPtr<IDMLDeviceContext> dml_device_context = device->GetDmlDeviceContext();
-  device->AwaitCopyExecution();
+      allocator_->DecodeDataHandle(output_data);
 
   ComPtr<IDMLResource> input_dml_resource;
   ComPtr<IDMLResource> output_dml_resource;
 
-  THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
-                                                     &input_dml_resource));
-  THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
-                                                     &output_dml_resource));
+  THROW_IF_FAILED(dml_device_context_->CreateResource(input_resource.Get(),
+                                                      &input_dml_resource));
+  THROW_IF_FAILED(dml_device_context_->CreateResource(output_resource.Get(),
+                                                      &output_dml_resource));
 
   const DML_TENSOR_DESC* dml_input_descs[1] = {&dml_input_desc};
 
-  ComPtr<IDMLOperation>
-      dml_operation;
-  THROW_IF_FAILED(dml_device->CreateElementWiseOperation(
+  ComPtr<IDMLOperation> dml_operation;
+  THROW_IF_FAILED(dml_device_->CreateElementWiseOperation(
       DML_ELEMENT_WISE_FUNCTION_IDENTITY, dml_input_descs, 1, &dml_output_desc,
       nullptr, DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
   IDMLResource* input_resources[1] = {input_dml_resource.Get()};
   THROW_IF_FAILED(
-      device->AddComputeOperation(dml_operation.Get(), input_resources, 1,
-                                  output_dml_resource.GetAddressOf(), 1));
+      device_->AddComputeOperation(dml_operation.Get(), input_resources, 1,
+                                   output_dml_resource.GetAddressOf(), 1));
 }
 
 REGISTER_KERNEL_BUILDER(Name("Transpose")
                             .Device(DEVICE_DML)
                             .TypeConstraint<float>("T")
                             .HostMemory("perm"),
-                        DmlTransposeOp);
+                        DmlTransposeDmlOp);
 
 }  // namespace tensorflow
