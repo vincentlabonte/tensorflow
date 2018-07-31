@@ -33,13 +33,7 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
 
-#include <wrl/client.h>
-
-#include <dml.h>
-#include <vector>
-
-#include "tensorflow/core/common_runtime/dml/dml_device.h"
-#include "tensorflow/core/kernels/dml_util.h"
+#include "tensorflow/core/kernels/dml_ops_common.h"
 
 namespace tensorflow {
 
@@ -446,10 +440,9 @@ TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SYCL);
 
 #endif  // TENSORFLOW_USE_SYCL
 
-// NOT TESTED
-class DmlSplitOp : public OpKernel {
+class DmlSplitOp : public DmlOpKernel {
  public:
-  explicit DmlSplitOp(OpKernelConstruction* c) : OpKernel(c) {}
+  explicit DmlSplitOp(OpKernelConstruction* c) : DmlOpKernel(c) {}
 
   void ComputeEasyCases(OpKernelContext* context, bool* done) {
     const Tensor& input = context->input(1);
@@ -526,6 +519,8 @@ class DmlSplitOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+    DmlOpKernel::Compute(context);
+
     bool done = false;
     ComputeEasyCases(context, &done);
     if (!context->status().ok() || done) {
@@ -550,71 +545,58 @@ class DmlSplitOp : public OpKernel {
     Eigen::DenseIndex split_dim_size;
     Eigen::DenseIndex suffix_dim_size;
 
-    std::tie(prefix_dim_size, split_dim_size, suffix_dim_size) = SetDims<Eigen::DenseIndex>(input_shape, split_dim);
+    std::tie(prefix_dim_size, split_dim_size, suffix_dim_size) =
+        SetDims<Eigen::DenseIndex>(input_shape, split_dim);
 
     const int64 split_dim_output_size = split_dim_size / num_split;
     TensorShape output_shape(input_shape);
     output_shape.set_dim(split_dim, split_dim_output_size);
 
-	std::vector<Tensor*> outputs(num_split);
+    std::vector<Tensor*> outputs(num_split);
     for (int i = 0; i < num_split; ++i) {
       OP_REQUIRES_OK(context,
                      context->allocate_output(i, output_shape, &outputs[i]));
     }
 
-    AllocatorAttributes attrs;
-    DmlAllocator* allocator =
-        static_cast<DmlAllocator*>(context->device()->GetAllocator(attrs));
-
     const void* input_data = input.tensor_data().data();
     std::vector<const void*> output_data_vector(num_split);
     for (int i = 0; i < num_split; i++) {
       output_data_vector[i] = outputs[i]->tensor_data().data();
-	}
+    }
 
     ComPtr<ID3D12Resource> input_resource =
-        allocator->DecodeDataHandle(input_data);
+        allocator_->DecodeDataHandle(input_data);
     std::vector<ComPtr<ID3D12Resource>> output_resources(num_split);
     for (int i = 0; i < num_split; i++) {
-      output_resources[i] = allocator->DecodeDataHandle(output_data_vector[i]);
-    }   
-
-    DmlDevice* device = dynamic_cast<DmlDevice*>(context->device());
-    OP_REQUIRES(context, device,
-                errors::Internal("Device should be DML, but is: ",
-                                 context->device()->name()));
-    ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
-    ComPtr<IDMLDeviceContext> dml_device_context =
-        device->GetDmlDeviceContext();
-    device->AwaitCopyExecution();
+      output_resources[i] = allocator_->DecodeDataHandle(output_data_vector[i]);
+    }
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> filter_dml_resource;
     std::vector<ComPtr<IDMLResource>> output_dml_resources(num_split);
 
-    THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
-                                                       &input_dml_resource));
+    THROW_IF_FAILED(dml_device_context_->CreateResource(input_resource.Get(),
+                                                        &input_dml_resource));
     for (int i = 0; i < num_split; i++) {
-      THROW_IF_FAILED(dml_device_context->CreateResource(output_resources[i].Get(),
-                                                         &output_dml_resources[i]));
+      THROW_IF_FAILED(dml_device_context_->CreateResource(
+          output_resources[i].Get(), &output_dml_resources[i]));
     }
 
-    DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&input);
+    DML_TENSOR_DESC dml_input_desc = CreateDmlTensorDesc(&input);
     std::vector<DML_TENSOR_DESC> dml_output_descs(num_split);
     for (int i = 0; i < num_split; i++) {
-      dml_output_descs[i] = DmlUtil::CreateDmlTensorDesc(outputs[i]);
+      dml_output_descs[i] = CreateDmlTensorDesc(outputs[i]);
     }
 
-	std::vector<DML_TENSOR_DESC*> dml_output_desc_ptrs(num_split);
+    std::vector<DML_TENSOR_DESC*> dml_output_desc_ptrs(num_split);
     for (int i = 0; i < num_split; i++) {
-          dml_output_desc_ptrs[i] = &(dml_output_descs[i]);
+      dml_output_desc_ptrs[i] = &(dml_output_descs[i]);
     }
 
     ComPtr<IDMLOperation> dml_operation;
-    THROW_IF_FAILED(dml_device->CreateSplitOperation(
-        &dml_input_desc, dml_output_desc_ptrs.data(), num_split,
-        split_dim, DML_EXECUTION_HINT_FLAGS_NONE,
-        &dml_operation));
+    THROW_IF_FAILED(dml_device_->CreateSplitOperation(
+        &dml_input_desc, dml_output_desc_ptrs.data(), num_split, split_dim,
+        DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
     IDMLResource* input_resources[2] = {input_dml_resource.Get(),
                                         filter_dml_resource.Get()};
@@ -623,8 +605,8 @@ class DmlSplitOp : public OpKernel {
       output_resource_vector[i] = output_dml_resources[i].Get();
     }
     THROW_IF_FAILED(
-        device->AddComputeOperation(dml_operation.Get(), input_resources, 2,
-                                    output_resource_vector.data(), 1));
+        device_->AddComputeOperation(dml_operation.Get(), input_resources, 2,
+                                     output_resource_vector.data(), 1));
   }
 };
 
