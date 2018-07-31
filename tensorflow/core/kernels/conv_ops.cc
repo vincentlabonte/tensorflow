@@ -50,12 +50,7 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
 
-#include <wrl/client.h>
-
-#include <dml.h>
-
-#include "tensorflow/core/common_runtime/dml/dml_device.h"
-#include "tensorflow/core/kernels/dml_util.h"
+#include "tensorflow/core/kernels/dml_ops_common.h"
 
 namespace tensorflow {
 
@@ -840,9 +835,9 @@ template class LaunchConv2DOp<GPUDevice, float>;
 
 #endif  // GOOGLE_CUDA
 
-class DmlConv2DOp : public BinaryOp<float> {
+class DmlConv2DOp : public DmlOpKernel {
  public:
-  explicit DmlConv2DOp(OpKernelConstruction* context) : BinaryOp<float>(context) {
+  explicit DmlConv2DOp(OpKernelConstruction* context) : DmlOpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilations_));
     OP_REQUIRES_OK(context, context->GetAttr("strides", &strides_));
     string data_format;
@@ -882,6 +877,8 @@ class DmlConv2DOp : public BinaryOp<float> {
   }
 
   void Compute(OpKernelContext* context) override {
+    DmlOpKernel::Compute(context);
+
     // Input tensor is of the following dimensions:
     // [ batch, in_rows, in_cols, in_depth ]
 
@@ -984,49 +981,36 @@ class DmlConv2DOp : public BinaryOp<float> {
       return;
     }
 
-    AllocatorAttributes attrs;
-    DmlAllocator* allocator =
-        static_cast<DmlAllocator*>(context->device()->GetAllocator(attrs));
-
     const void* input_data = input.tensor_data().data();
     const void* filter_data = filter.tensor_data().data();
     const void* output_data = output->tensor_data().data();
 
     ComPtr<ID3D12Resource> input_resource =
-        allocator->DecodeDataHandle(input_data);
+        allocator_->DecodeDataHandle(input_data);
     ComPtr<ID3D12Resource> filter_resource =
-        allocator->DecodeDataHandle(filter_data);
+        allocator_->DecodeDataHandle(filter_data);
     ComPtr<ID3D12Resource> output_resource =
-        allocator->DecodeDataHandle(output_data);
-
-    DmlDevice* device = dynamic_cast<DmlDevice*>(context->device());
-    OP_REQUIRES(context, device,
-                errors::Internal("Device should be DML, but is: ",
-                                 context->device()->name()));
-    ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
-    ComPtr<IDMLDeviceContext> dml_device_context =
-        device->GetDmlDeviceContext();
-    device->AwaitCopyExecution();
+        allocator_->DecodeDataHandle(output_data);
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> filter_dml_resource;
     ComPtr<IDMLResource> output_dml_resource;
 
-    THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
-                                                       &input_dml_resource));
-    THROW_IF_FAILED(dml_device_context->CreateResource(filter_resource.Get(),
-                                                       &filter_dml_resource));
-    THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
-                                                       &output_dml_resource));
+    THROW_IF_FAILED(dml_device_context_->CreateResource(input_resource.Get(),
+                                                        &input_dml_resource));
+    THROW_IF_FAILED(dml_device_context_->CreateResource(filter_resource.Get(),
+                                                        &filter_dml_resource));
+    THROW_IF_FAILED(dml_device_context_->CreateResource(output_resource.Get(),
+                                                        &output_dml_resource));
 
-    DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&input);
-    DML_TENSOR_DESC dml_filter_desc = DmlUtil::CreateDmlTensorDesc(&filter);
-    DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(output);
+    DML_TENSOR_DESC dml_input_desc = CreateDmlTensorDesc(&input);
+    DML_TENSOR_DESC dml_filter_desc = CreateDmlTensorDesc(&filter);
+    DML_TENSOR_DESC dml_output_desc = CreateDmlTensorDesc(output);
 
-    DmlUtil::ConvertNhwcToNchwUsingStrides(dml_input_desc);
-    DmlUtil::ConvertNhwcToNchwUsingStrides(dml_output_desc);
+    ConvertNhwcToNchwUsingStrides(dml_input_desc);
+    ConvertNhwcToNchwUsingStrides(dml_output_desc);
 
-	UINT val_stride_dml_tensor_desc = 1;
+    UINT val_stride_dml_tensor_desc = 1;
     for (int i = DML_TENSOR_DIMENSION_COUNT_NCHW - 1; i >= 0; i--) {
       if (dml_filter_desc.sizes[i] > 1) {
         dml_filter_desc.strides[i] = val_stride_dml_tensor_desc;
@@ -1045,7 +1029,6 @@ class DmlConv2DOp : public BinaryOp<float> {
     }
     dml_filter_desc.flags = DML_TENSOR_FLAGS_USE_STRIDES;
 
-
     const UINT strides[4] = {0, 0, stride_rows, stride_cols};
     const UINT dilations[4] = {1, 1, dilation_rows, dilation_cols};
     const UINT start_padding[4] = {0, 0, pad_rows, pad_cols};
@@ -1053,16 +1036,18 @@ class DmlConv2DOp : public BinaryOp<float> {
     const UINT output_padding[4] = {0, 0, pad_rows, pad_cols};
 
     ComPtr<IDMLOperation> dml_operation;
-    THROW_IF_FAILED(dml_device->CreateConvolutionOperation(
+    THROW_IF_FAILED(dml_device_->CreateConvolutionOperation(
         &dml_input_desc, &dml_filter_desc, nullptr, &dml_output_desc,
-        DML_CONVOLUTION_MODE_CROSS_CORRELATION, DML_CONVOLUTION_DIRECTION_FORWARD,
-        strides, dilations, start_padding, end_padding, output_padding, 4,
-        1, DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
+        DML_CONVOLUTION_MODE_CROSS_CORRELATION,
+        DML_CONVOLUTION_DIRECTION_FORWARD, strides, dilations, start_padding,
+        end_padding, output_padding, 4, 1, DML_EXECUTION_HINT_FLAGS_NONE,
+        &dml_operation));
 
-    IDMLResource* input_resources[2] = {input_dml_resource.Get(), filter_dml_resource.Get()};
+    IDMLResource* input_resources[2] = {input_dml_resource.Get(),
+                                        filter_dml_resource.Get()};
     THROW_IF_FAILED(
-        device->AddComputeOperation(dml_operation.Get(), input_resources, 2,
-                                    output_dml_resource.GetAddressOf(), 1));
+        device_->AddComputeOperation(dml_operation.Get(), input_resources, 2,
+                                     output_dml_resource.GetAddressOf(), 1));
   }
 
  private:
@@ -1073,7 +1058,6 @@ class DmlConv2DOp : public BinaryOp<float> {
 };
 
 REGISTER_KERNEL_BUILDER(
-    Name("Conv2D").Device(DEVICE_DML).TypeConstraint<float>("T"),
-    DmlConv2DOp);
+    Name("Conv2D").Device(DEVICE_DML).TypeConstraint<float>("T"), DmlConv2DOp);
 
 }  // namespace tensorflow
