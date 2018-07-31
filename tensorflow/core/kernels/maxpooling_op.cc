@@ -46,12 +46,7 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
 
-#include <wrl/client.h>
-
-#include <dml.h>
-
-#include "tensorflow/core/common_runtime/dml/dml_device.h"
-#include "tensorflow/core/kernels/dml_util.h"
+#include "tensorflow/core/kernels/dml_ops_common.h"
 
 namespace tensorflow {
 
@@ -1484,9 +1479,10 @@ REGISTER_KERNEL_BUILDER(Name("MaxPoolV2")
 
 #undef REGISTER_MAX_POOL_KERNELS
 
-class DmlMaxPoolingOp : public OpKernel {
+class DmlMaxPoolingOp : public DmlOpKernel {
  public:
-  explicit DmlMaxPoolingOp(OpKernelConstruction* context) : OpKernel(context) {
+  explicit DmlMaxPoolingOp(OpKernelConstruction* context)
+      : DmlOpKernel(context) {
     string data_format;
     auto status = context->GetAttr("data_format", &data_format);
     if (status.ok()) {
@@ -1515,6 +1511,8 @@ class DmlMaxPoolingOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+    DmlOpKernel::Compute(context);
+
     const Tensor& tensor_in = context->input(0);
     PoolParameters params{context,  ksize_,      stride_,
                           padding_, FORMAT_NHWC, tensor_in.shape()};
@@ -1526,39 +1524,26 @@ class DmlMaxPoolingOp : public OpKernel {
     OP_REQUIRES_OK(context, context->allocate_output(
                                 0, params.forward_output_shape(), &output));
 
-    AllocatorAttributes attrs;
-    DmlAllocator* allocator =
-        static_cast<DmlAllocator*>(context->device()->GetAllocator(attrs));
-
     const void* input_data = tensor_in.tensor_data().data();
     const void* output_data = output->tensor_data().data();
 
     ComPtr<ID3D12Resource> input_resource =
-        allocator->DecodeDataHandle(input_data);
+        allocator_->DecodeDataHandle(input_data);
     ComPtr<ID3D12Resource> output_resource =
-        allocator->DecodeDataHandle(output_data);
-
-    DmlDevice* device = dynamic_cast<DmlDevice*>(context->device());
-    OP_REQUIRES(context, device,
-                errors::Internal("Device should be DML, but is: ",
-                                 context->device()->name()));
-    ComPtr<IDMLDevice> dml_device = device->GetDmlDevice();
-    ComPtr<IDMLDeviceContext> dml_device_context =
-        device->GetDmlDeviceContext();
-    device->AwaitCopyExecution();
+        allocator_->DecodeDataHandle(output_data);
 
     ComPtr<IDMLResource> input_dml_resource;
     ComPtr<IDMLResource> output_dml_resource;
 
-    THROW_IF_FAILED(dml_device_context->CreateResource(input_resource.Get(),
-                                                       &input_dml_resource));
-    THROW_IF_FAILED(dml_device_context->CreateResource(output_resource.Get(),
-                                                       &output_dml_resource));
+    THROW_IF_FAILED(dml_device_context_->CreateResource(input_resource.Get(),
+                                                        &input_dml_resource));
+    THROW_IF_FAILED(dml_device_context_->CreateResource(output_resource.Get(),
+                                                        &output_dml_resource));
 
-    DML_TENSOR_DESC dml_input_desc = DmlUtil::CreateDmlTensorDesc(&tensor_in);
-    DML_TENSOR_DESC dml_output_desc = DmlUtil::CreateDmlTensorDesc(output);
-    DmlUtil::ConvertNhwcToNchwUsingStrides(dml_input_desc);
-    DmlUtil::ConvertNhwcToNchwUsingStrides(dml_output_desc);
+    DML_TENSOR_DESC dml_input_desc = CreateDmlTensorDesc(&tensor_in);
+    DML_TENSOR_DESC dml_output_desc = CreateDmlTensorDesc(output);
+    ConvertNhwcToNchwUsingStrides(dml_input_desc);
+    ConvertNhwcToNchwUsingStrides(dml_output_desc);
 
     const UINT strides[4] = {1, params.depth_stride, params.row_stride,
                              params.col_stride};
@@ -1570,15 +1555,15 @@ class DmlMaxPoolingOp : public OpKernel {
                                  params.pad_cols};
 
     ComPtr<IDMLOperation> dml_operation;
-    THROW_IF_FAILED(dml_device->CreatePoolingOperation(
+    THROW_IF_FAILED(dml_device_->CreatePoolingOperation(
         DML_POOLING_FUNCTION_MAX, &dml_input_desc, &dml_output_desc, strides,
         window_size, start_padding, end_padding, 4,
         DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
     IDMLResource* input_resources[1] = {input_dml_resource.Get()};
     THROW_IF_FAILED(
-        device->AddComputeOperation(dml_operation.Get(), input_resources, 1,
-                                    output_dml_resource.GetAddressOf(), 1));
+        device_->AddComputeOperation(dml_operation.Get(), input_resources, 1,
+                                     output_dml_resource.GetAddressOf(), 1));
   }
 
  private:
