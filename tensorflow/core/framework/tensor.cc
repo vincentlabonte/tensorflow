@@ -60,7 +60,7 @@ namespace tensorflow {
 // in a Tensor's FromProto.
 REGISTER_UNARY_VARIANT_DECODE_FUNCTION(Tensor, "tensorflow::Tensor");
 
-namespace debug {
+namespace {
 
 // An un-templated base class for Buffer.
 class BufferBase : public TensorBuffer {
@@ -593,8 +593,6 @@ void UnrefIfNonNull(core::RefCounted* buf) {
 }
 
 }  // end namespace
-
-using namespace debug; 
 
 Tensor::Tensor() : Tensor(DT_FLOAT) {}
 
