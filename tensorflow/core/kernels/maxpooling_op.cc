@@ -1557,7 +1557,7 @@ class DmlMaxPoolingOp : public DmlOpKernel {
     ComPtr<IDMLOperation> dml_operation;
     THROW_IF_FAILED(dml_device_->CreatePoolingOperation(
         DML_POOLING_FUNCTION_MAX, &dml_input_desc, &dml_output_desc, strides,
-        window_size, start_padding, end_padding, 4,
+        window_size, start_padding, end_padding, 4, nullptr,
         DML_EXECUTION_HINT_FLAGS_NONE, &dml_operation));
 
     IDMLResource* input_resources[1] = {input_dml_resource.Get()};

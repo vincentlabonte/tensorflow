@@ -46,8 +46,9 @@ DmlDevice::DmlDevice(const SessionOptions& options, const string& name,
   THROW_IF_FAILED(d3d12_device_.Get()->CreateFence(
       copy_fence_value_, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&copy_fence_)));
 
-  THROW_IF_FAILED(dml_device_->CreateDeviceContext(compute_fence_.Get(),
-                                                   &dml_device_context_));
+  THROW_IF_FAILED(dml_device_->CreateDeviceContext(
+      compute_fence_.Get(), D3D12_COMMAND_LIST_TYPE_COMPUTE,
+      &dml_device_context_));
 }
 
 DmlDevice::~DmlDevice() {

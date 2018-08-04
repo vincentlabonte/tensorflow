@@ -1040,7 +1040,7 @@ class DmlConv2DOp : public DmlOpKernel {
         &dml_input_desc, &dml_filter_desc, nullptr, &dml_output_desc,
         DML_CONVOLUTION_MODE_CROSS_CORRELATION,
         DML_CONVOLUTION_DIRECTION_FORWARD, strides, dilations, start_padding,
-        end_padding, output_padding, 4, 1, DML_EXECUTION_HINT_FLAGS_NONE,
+        end_padding, output_padding, 4, 1, nullptr, DML_EXECUTION_HINT_FLAGS_NONE,
         &dml_operation));
 
     IDMLResource* input_resources[2] = {input_dml_resource.Get(),
